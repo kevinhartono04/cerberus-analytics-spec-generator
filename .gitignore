@@ -1,6 +1,7 @@
 .next
 node_modules
 data/*.sqlite
+data/*.sqlite-*
 coverage
 test-results
 playwright-report

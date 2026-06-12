@@ -44,6 +44,13 @@ test("generates, edits, saves, reopens, and deletes a draft spec", async ({ page
   await page.getByRole("button", { name: "Save Spec" }).click();
   await expect(page.getByText(/Saved /)).toBeVisible();
 
+  await page.getByRole("button", { name: "Spec Viewer" }).click();
+  await expect(page.getByText("Spec Viewer").first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sample Match Timed" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Event", exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Payload Description" })).toBeVisible();
+  await expect(page.getByText("Platform Ad Payload Enrichment")).toBeVisible();
+
   await page.getByRole("button", { name: "Saved Specs" }).click();
   await expect(page.getByText("Saved Game Specs")).toBeVisible();
   await expect(page.getByText("Sample Match Timed")).toBeVisible();

@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { BookOpen, FileText, Library, Play, Plus, Save, Search, Sparkles, Trash2, Wand2 } from "lucide-react";
+import { BookOpen, FileText, Library, Play, Plus, Save, Search, Sparkles, Table2, Trash2, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { UseFormReturn, useForm } from "react-hook-form";
 
@@ -16,7 +16,7 @@ import {
   SavedSpecSummary,
 } from "@/lib/types";
 
-type Tab = "intake" | "review" | "specs" | "library";
+type Tab = "intake" | "review" | "viewer" | "specs" | "library";
 
 const exampleIntake: GameIntake = {
   gameTitle: "Sample Match Timed",
@@ -896,10 +896,307 @@ function SavedSpecsBrowser({
   );
 }
 
+type SpecViewerRow = {
+  id: string;
+  eventName: string;
+  category: string;
+  featurePack: string;
+  trigger: string;
+  argumentName: string;
+  argumentDescription: string;
+  argumentExamples: string;
+  payloadName: string;
+  payloadDescription: string;
+  payloadExample: string;
+  payloadType: string;
+  requiredness: string;
+  notes: string;
+  status: string;
+};
+
+function rowsForSpec(spec: GeneratedSpec): SpecViewerRow[] {
+  return spec.generatedEvents.flatMap((event) => {
+    if (!event.payloadFields.length) {
+      return [
+        {
+          id: `${event.eventName}-event`,
+          eventName: event.eventName,
+          category: event.category,
+          featurePack: event.featurePack,
+          trigger: event.trigger,
+          argumentName: event.argumentName,
+          argumentDescription: event.argumentDescription,
+          argumentExamples: event.argumentExamples,
+          payloadName: "",
+          payloadDescription: "",
+          payloadExample: "",
+          payloadType: "",
+          requiredness: "",
+          notes: "",
+          status: event.status,
+        },
+      ];
+    }
+    return event.payloadFields.map((payload, payloadIndex) => ({
+      id: `${event.eventName}-${payload.canonicalFieldName}-${payloadIndex}`,
+      eventName: event.eventName,
+      category: event.category,
+      featurePack: event.featurePack,
+      trigger: event.trigger,
+      argumentName: event.argumentName,
+      argumentDescription: event.argumentDescription,
+      argumentExamples: event.argumentExamples,
+      payloadName: payload.canonicalFieldName,
+      payloadDescription: payload.description,
+      payloadExample: payload.example,
+      payloadType: payload.type,
+      requiredness: payload.requiredness,
+      notes: payload.notes,
+      status: event.status,
+    }));
+  });
+}
+
+function SpecViewer({
+  specs,
+  savedSpecs,
+  activeSpecId,
+  setActiveSpecId,
+  isLoading,
+  onOpenEdit,
+}: {
+  specs: GeneratedSpec[];
+  savedSpecs: SavedSpecSummary[];
+  activeSpecId: string;
+  setActiveSpecId: (id: string) => void;
+  isLoading: boolean;
+  onOpenEdit: (id: string) => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const activeSpec = specs.find((item) => item.id === activeSpecId) ?? specs[0] ?? null;
+  const rows = useMemo(() => {
+    if (!activeSpec) return [];
+    const lower = query.toLowerCase();
+    return rowsForSpec(activeSpec).filter((row) =>
+      [
+        row.eventName,
+        row.category,
+        row.featurePack,
+        row.trigger,
+        row.argumentName,
+        row.argumentDescription,
+        row.argumentExamples,
+        row.payloadName,
+        row.payloadDescription,
+        row.payloadExample,
+        row.payloadType,
+        row.requiredness,
+        row.notes,
+        row.status,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(lower),
+    );
+  }, [activeSpec, query]);
+
+  if (isLoading) {
+    return (
+      <section className="rounded-md border border-line bg-white p-10 text-center shadow-sm">
+        <Table2 className="mx-auto h-8 w-8 text-cobalt" />
+        <h2 className="mt-4 text-xl font-bold text-ink">Loading saved specs</h2>
+      </section>
+    );
+  }
+
+  if (!savedSpecs.length) {
+    return (
+      <section className="rounded-md border border-dashed border-line bg-white p-10 text-center shadow-sm">
+        <Table2 className="mx-auto h-8 w-8 text-cobalt" />
+        <h2 className="mt-4 text-xl font-bold text-ink">No saved specs to view</h2>
+        <p className="mt-2 text-sm text-slate-600">Generate and save a game spec first, then it will appear here.</p>
+      </section>
+    );
+  }
+
+  if (!activeSpec) {
+    return (
+      <section className="rounded-md border border-line bg-white p-10 text-center shadow-sm">
+        <Table2 className="mx-auto h-8 w-8 text-cobalt" />
+        <h2 className="mt-4 text-xl font-bold text-ink">Select a game spec</h2>
+      </section>
+    );
+  }
+
+  const activeSummary = savedSpecs.find((item) => item.id === activeSpec.id);
+
+  return (
+    <section className="space-y-4">
+      <div className="rounded-md border border-line bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-line px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-cobalt">
+              <Table2 className="h-4 w-4" />
+              Spec Viewer
+            </div>
+            <h2 className="mt-1 text-xl font-bold text-ink">{activeSpec.intake.gameTitle}</h2>
+            <p className="text-sm text-slate-600">
+              {activeSpec.intake.genre || "Unspecified genre"} · {activeSpec.generatedEvents.length} events ·{" "}
+              {rowsForSpec(activeSpec).length} payload rows
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => onOpenEdit(activeSpec.id)}
+              className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+            >
+              <FileText className="h-4 w-4" />
+              Edit Spec
+            </button>
+          </div>
+        </div>
+
+        {savedSpecs.length > 1 ? (
+          <div className="flex gap-1 overflow-x-auto border-b border-line bg-mist px-3 pt-3">
+            {savedSpecs.map((savedSpec) => (
+              <button
+                key={savedSpec.id}
+                type="button"
+                onClick={() => setActiveSpecId(savedSpec.id)}
+                className={`focus-ring shrink-0 rounded-t-md border border-b-0 px-4 py-2 text-sm font-semibold ${
+                  activeSpec.id === savedSpec.id
+                    ? "border-line bg-white text-ink"
+                    : "border-transparent bg-transparent text-slate-600 hover:bg-white/70"
+                }`}
+              >
+                {savedSpec.gameTitle}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="grid grid-cols-1 gap-3 px-4 py-4 md:grid-cols-4">
+          <Metric label="Status" value={activeSummary?.status ?? reviewStatusForEvents(activeSpec.generatedEvents)} />
+          <Metric label="Events" value={activeSpec.generatedEvents.length} />
+          <Metric label="Payload Rows" value={rowsForSpec(activeSpec).length} />
+          <Metric label="Updated" value={activeSummary ? new Date(activeSummary.updatedAt).toLocaleDateString() : "-"} />
+        </div>
+
+        <div className="border-t border-line px-4 py-3">
+          <div className="flex items-center gap-3 rounded-md border border-line bg-white px-3 py-2 shadow-sm">
+            <Search className="h-4 w-4 text-slate-500" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search event names, triggers, payloads, examples..."
+              className="focus-ring w-full border-0 bg-transparent text-sm outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="max-h-[680px] overflow-auto border-t border-line">
+          <table className="w-full min-w-[1680px] border-separate border-spacing-0 text-left text-sm">
+            <thead className="sticky top-0 z-10 bg-sage text-xs uppercase text-slate-600">
+              <tr>
+                <th className="sticky left-0 z-20 min-w-56 border-b border-line bg-sage px-3 py-2">Event</th>
+                <th className="min-w-36 border-b border-line px-3 py-2">Category</th>
+                <th className="min-w-44 border-b border-line px-3 py-2">Feature Pack</th>
+                <th className="min-w-96 border-b border-line px-3 py-2">Trigger Condition</th>
+                <th className="min-w-40 border-b border-line px-3 py-2">Argument</th>
+                <th className="min-w-72 border-b border-line px-3 py-2">Argument Description</th>
+                <th className="min-w-56 border-b border-line px-3 py-2">Argument Examples</th>
+                <th className="min-w-48 border-b border-line px-3 py-2">Payload</th>
+                <th className="min-w-80 border-b border-line px-3 py-2">Payload Description</th>
+                <th className="min-w-56 border-b border-line px-3 py-2">Payload Example</th>
+                <th className="min-w-28 border-b border-line px-3 py-2">Type</th>
+                <th className="min-w-40 border-b border-line px-3 py-2">Requiredness</th>
+                <th className="min-w-72 border-b border-line px-3 py-2">Notes</th>
+                <th className="min-w-32 border-b border-line px-3 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={row.id} className={rowIndex % 2 === 0 ? "bg-white" : "bg-mist/60"}>
+                  <td className="sticky left-0 z-[1] border-b border-line bg-inherit px-3 py-3 align-top font-semibold text-ink">
+                    {row.eventName}
+                  </td>
+                  <td className="border-b border-line px-3 py-3 align-top">{row.category}</td>
+                  <td className="border-b border-line px-3 py-3 align-top">{row.featurePack}</td>
+                  <td className="border-b border-line px-3 py-3 align-top text-slate-700">{row.trigger}</td>
+                  <td className="border-b border-line px-3 py-3 align-top">{row.argumentName}</td>
+                  <td className="border-b border-line px-3 py-3 align-top text-slate-700">{row.argumentDescription}</td>
+                  <td className="border-b border-line px-3 py-3 align-top text-slate-700">{row.argumentExamples}</td>
+                  <td className="border-b border-line px-3 py-3 align-top font-semibold">{row.payloadName}</td>
+                  <td className="border-b border-line px-3 py-3 align-top text-slate-700">{row.payloadDescription}</td>
+                  <td className="border-b border-line px-3 py-3 align-top font-mono text-xs text-slate-700">{row.payloadExample}</td>
+                  <td className="border-b border-line px-3 py-3 align-top">{row.payloadType}</td>
+                  <td className="border-b border-line px-3 py-3 align-top">{row.requiredness}</td>
+                  <td className="border-b border-line px-3 py-3 align-top text-slate-700">{row.notes}</td>
+                  <td className="border-b border-line px-3 py-3 align-top">
+                    <span className="rounded bg-white px-2 py-1 text-xs font-semibold text-slate-600 shadow-sm">
+                      {row.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {!rows.length ? (
+                <tr>
+                  <td colSpan={14} className="px-3 py-10 text-center text-sm text-slate-500">
+                    No rows match the current search.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {activeSpec.platformAdPayloads.length ? (
+        <div className="rounded-md border border-line bg-white shadow-sm">
+          <div className="border-b border-line px-4 py-3">
+            <h3 className="font-bold text-ink">Platform Ad Payload Enrichment</h3>
+            <p className="text-sm text-slate-600">Additional payloads required on platform-triggered ad events.</p>
+          </div>
+          <div className="max-h-[360px] overflow-auto">
+            <table className="w-full min-w-[1080px] text-left text-sm">
+              <thead className="sticky top-0 bg-sage text-xs uppercase text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">Platform Event</th>
+                  <th className="px-3 py-2">Ad Family</th>
+                  <th className="px-3 py-2">Payload</th>
+                  <th className="px-3 py-2">Description</th>
+                  <th className="px-3 py-2">Example</th>
+                  <th className="px-3 py-2">Requiredness</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {activeSpec.platformAdPayloads.map((payload, index) => (
+                  <tr key={`${payload.platformEventName}-${payload.canonicalPayloadName}-${index}`}>
+                    <td className="px-3 py-3 font-semibold">{payload.platformEventName}</td>
+                    <td className="px-3 py-3">{payload.adFamily}</td>
+                    <td className="px-3 py-3 font-semibold">{payload.canonicalPayloadName}</td>
+                    <td className="px-3 py-3 text-slate-700">{payload.description}</td>
+                    <td className="px-3 py-3 font-mono text-xs text-slate-700">{payload.example}</td>
+                    <td className="px-3 py-3">{payload.requiredness}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export default function MvpApp({ library }: { library: LibrarySnapshot }) {
   const [activeTab, setActiveTab] = useState<Tab>("intake");
   const [spec, setSpec] = useState<GeneratedSpec | null>(null);
   const [savedSpecs, setSavedSpecs] = useState<SavedSpecSummary[]>([]);
+  const [viewerSpecs, setViewerSpecs] = useState<GeneratedSpec[]>([]);
+  const [viewerActiveSpecId, setViewerActiveSpecId] = useState("");
+  const [isViewerLoading, setIsViewerLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
@@ -939,11 +1236,43 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
     setSavedSpecs((await response.json()) as SavedSpecSummary[]);
   }
 
+  async function loadViewerSpecs() {
+    setIsViewerLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/specs");
+      if (!response.ok) throw new Error(await response.text());
+      const summaries = (await response.json()) as SavedSpecSummary[];
+      setSavedSpecs(summaries);
+      const fullSpecs = await Promise.all(
+        summaries.map(async (summary) => {
+          const specResponse = await fetch(`/api/specs/${summary.id}`);
+          if (!specResponse.ok) throw new Error(await specResponse.text());
+          return (await specResponse.json()) as GeneratedSpec;
+        }),
+      );
+      setViewerSpecs(fullSpecs);
+      if (!fullSpecs.some((item) => item.id === viewerActiveSpecId)) {
+        setViewerActiveSpecId(fullSpecs[0]?.id ?? "");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load saved specs");
+    } finally {
+      setIsViewerLoading(false);
+    }
+  }
+
   useEffect(() => {
     refreshSavedSpecs().catch((err) => {
       setError(err instanceof Error ? err.message : "Could not load saved specs");
     });
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "viewer") {
+      void loadViewerSpecs();
+    }
+  }, [activeTab]);
 
   async function onSubmit(values: GameIntake) {
     setIsGenerating(true);
@@ -980,6 +1309,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
       if (!response.ok) throw new Error(await response.text());
       const saved = (await response.json()) as SavedSpecSummary;
       await refreshSavedSpecs();
+      if (activeTab === "viewer") await loadViewerSpecs();
       setSaveStatus(`Saved ${new Date(saved.updatedAt).toLocaleString()}`);
     } catch (err) {
       setSaveStatus("");
@@ -1012,6 +1342,8 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
       setSpec(null);
       setSaveStatus("");
     }
+    setViewerSpecs((items) => items.filter((item) => item.id !== id));
+    if (viewerActiveSpecId === id) setViewerActiveSpecId("");
     await refreshSavedSpecs();
   }
 
@@ -1032,6 +1364,9 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
             </TabButton>
             <TabButton tab="review" activeTab={activeTab} setActiveTab={setActiveTab}>
               Review
+            </TabButton>
+            <TabButton tab="viewer" activeTab={activeTab} setActiveTab={setActiveTab}>
+              Spec Viewer
             </TabButton>
             <TabButton tab="specs" activeTab={activeTab} setActiveTab={setActiveTab}>
               Saved Specs
@@ -1161,6 +1496,16 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
 
         {activeTab === "review" ? (
           <SpecReview spec={spec} setSpec={setSpec} onSave={saveCurrentSpec} saveStatus={saveStatus} />
+        ) : null}
+        {activeTab === "viewer" ? (
+          <SpecViewer
+            specs={viewerSpecs}
+            savedSpecs={savedSpecs}
+            activeSpecId={viewerActiveSpecId}
+            setActiveSpecId={setViewerActiveSpecId}
+            isLoading={isViewerLoading}
+            onOpenEdit={openSavedSpec}
+          />
         ) : null}
         {activeTab === "specs" ? (
           <SavedSpecsBrowser savedSpecs={savedSpecs} onOpen={openSavedSpec} onDelete={deleteSpec} />
