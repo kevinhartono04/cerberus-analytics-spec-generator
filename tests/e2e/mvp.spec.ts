@@ -24,6 +24,7 @@ test("generates, edits, saves, reopens, and deletes a draft spec", async ({ page
 
   await expect(page.getByText("Generated Events")).toBeVisible();
   await expect(page.getByText("Platform Ad Payload Enrichment")).toBeVisible();
+  await expect(page.getByText("Ad Payload Details")).toBeVisible();
   await expect(page.getByText("Game_Start")).toBeVisible();
 
   const firstTrigger = page.locator("textarea").first();

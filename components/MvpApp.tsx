@@ -21,19 +21,19 @@ type Tab = "intake" | "review" | "viewer" | "specs" | "library";
 const exampleIntake: GameIntake = {
   gameTitle: "Sample Match Timed",
   genre: "Match-3 timed puzzle",
-  coreLoop: "Level start, Player action loop, Level end, Retry / continue flow",
+  coreLoop: "Level / round based",
   gameModes: "Journey, Daily Challenge",
-  mechanics: "Limited time, Match objectives, Boosters / powerups, Possible matches, Revive, Play-on",
+  mechanics: "Limited time, Match objectives, Powerups, Revive, Play-on, Difficulty tiers",
   winConditions: "Complete all level objectives before time expires",
   loseConditions: "Out of time, delivery failed",
-  economy: "Soft currency, Item inventory, Earn/spend transactions, Level win rewards, Ad rewards",
+  economy: "Currency, Item inventory",
   itemsOrPowerups: "shuffle, takeaway, hourglass, toolkit",
   powerupNames: "shuffle, takeaway, hourglass, toolkit",
-  iap: "Shop / store, Coin packs, Booster bundles, Remove ads",
+  iap: "Store enabled, Paid products",
   ads: "Rewarded Ads, Interstitial Ads",
   rewardedAdPlacements: "2x_rewards, daily_reward, ad_reward, powerup",
   interstitialAdPlacements: "game_end, session_resume, mid_game",
-  liveOps: "Daily challenge, Season event",
+  liveOps: "Events / seasons, Missions / milestones",
   notes: "Include platform ad payload enrichment but do not create manual ad lifecycle specs.",
 };
 
@@ -45,86 +45,39 @@ const intakeOptionGroups: Array<{
 }> = [
   {
     name: "coreLoop",
-    label: "Core Loop",
-    helper: "Pick the repeated gameplay steps.",
-    options: [
-      "Level start",
-      "Player action loop",
-      "Level end",
-      "Retry / continue flow",
-      "Session-based round",
-      "Tutorial flow",
-      "Progression map",
-    ],
+    label: "Game Structure",
+    helper: "Pick the broad play structure.",
+    options: ["Level / round based", "Session based"],
   },
   {
     name: "mechanics",
     label: "Mechanics",
-    helper: "Pick the main gameplay systems.",
-    options: [
-      "Limited moves",
-      "Limited time",
-      "Match objectives",
-      "Boosters / powerups",
-      "Possible matches",
-      "Revive",
-      "Play-on",
-      "Extra slot / extra grill",
-      "Skip objective",
-      "Difficulty tiers",
-      "Collection objective",
-    ],
+    helper: "Pick mechanics that affect payload requirements.",
+    options: ["Limited moves", "Limited time", "Match objectives", "Powerups", "Revive", "Play-on", "Difficulty tiers"],
   },
   {
     name: "economy",
     label: "Economy",
-    helper: "Pick currencies, rewards, and inventory systems.",
-    options: [
-      "Soft currency",
-      "Hard currency",
-      "Item inventory",
-      "Earn/spend transactions",
-      "Level win rewards",
-      "Ad rewards",
-      "Daily rewards",
-      "Collection rewards",
-      "Lives / energy",
-    ],
+    helper: "Pick systems that require transaction tracking.",
+    options: ["Currency", "Item inventory", "Lives / energy"],
   },
   {
     name: "iap",
     label: "IAP",
     helper: "Pick paid purchase surfaces.",
-    options: [
-      "Shop / store",
-      "Coin packs",
-      "Booster bundles",
-      "Starter pack",
-      "Remove ads",
-      "Limited-time offer",
-      "Season pass",
-    ],
+    options: ["Store enabled", "Paid products"],
   },
   {
     name: "ads",
     label: "Ads",
     helper: "Pick ad formats used by the game.",
-    options: ["Rewarded Ads", "Interstitial Ads", "Banner Ads"],
+    options: ["Rewarded Ads", "Interstitial Ads"],
   },
   {
     name: "liveOps",
     label: "Live Ops",
     helper: "Pick limited-time or recurring event systems.",
-    options: [
-      "Daily challenge",
-      "Season event",
-      "Leaderboard event",
-      "Mission milestones",
-      "Treasure quest",
-      "Battle pass",
-      "Event progress",
-      "Event completion",
-    ],
+    options: ["Events / seasons", "Missions / milestones", "Leaderboards"],
   },
 ];
 
@@ -492,6 +445,8 @@ function SpecReview({
 }) {
   const [globalFilter, setGlobalFilter] = useState("");
   const [selectedEventIndex, setSelectedEventIndex] = useState(0);
+  const [adPayloadFilter, setAdPayloadFilter] = useState("");
+  const [selectedAdPayloadIndex, setSelectedAdPayloadIndex] = useState(0);
   const filteredEventIndexes = useMemo(() => {
     if (!spec) return [];
     const lower = globalFilter.toLowerCase();
@@ -502,6 +457,26 @@ function SpecReview({
       )
       .map(({ index }) => index);
   }, [globalFilter, spec]);
+  const filteredAdPayloadIndexes = useMemo(() => {
+    if (!spec) return [];
+    const lower = adPayloadFilter.toLowerCase();
+    return spec.platformAdPayloads
+      .map((payload, index) => ({ payload, index }))
+      .filter(({ payload }) =>
+        [
+          payload.platformEventName,
+          payload.adFamily,
+          payload.canonicalPayloadName,
+          payload.description,
+          payload.example,
+          payload.requiredness,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(lower),
+      )
+      .map(({ index }) => index);
+  }, [adPayloadFilter, spec]);
 
   useEffect(() => {
     if (!spec?.generatedEvents.length) {
@@ -512,6 +487,16 @@ function SpecReview({
       setSelectedEventIndex(spec.generatedEvents.length - 1);
     }
   }, [selectedEventIndex, spec?.generatedEvents.length]);
+
+  useEffect(() => {
+    if (!spec?.platformAdPayloads.length) {
+      setSelectedAdPayloadIndex(0);
+      return;
+    }
+    if (selectedAdPayloadIndex >= spec.platformAdPayloads.length) {
+      setSelectedAdPayloadIndex(spec.platformAdPayloads.length - 1);
+    }
+  }, [selectedAdPayloadIndex, spec?.platformAdPayloads.length]);
 
   function updateEvent(rowIndex: number, patch: Partial<GeneratedEvent>) {
     if (!spec) return;
@@ -583,6 +568,10 @@ function SpecReview({
   }
 
   const selectedEvent = spec.generatedEvents[selectedEventIndex] ?? null;
+  const activeAdPayloadIndex = filteredAdPayloadIndexes.includes(selectedAdPayloadIndex)
+    ? selectedAdPayloadIndex
+    : (filteredAdPayloadIndexes[0] ?? selectedAdPayloadIndex);
+  const selectedAdPayload = spec.platformAdPayloads[activeAdPayloadIndex] ?? null;
 
   return (
     <section className="space-y-6">
@@ -747,61 +736,142 @@ function SpecReview({
 
       {spec.platformAdPayloads.length ? (
         <div className="rounded-md border border-line bg-white p-4 shadow-sm">
-          <h3 className="font-bold text-ink">Platform Ad Payload Enrichment</h3>
-          <p className="mt-1 text-sm text-slate-600">
-            These are additional payloads for platform-triggered ad events, not manual ad lifecycle specs.
-          </p>
-          <div className="mt-3 grid gap-3 xl:grid-cols-2">
-            {spec.platformAdPayloads.map((payload, payloadIndex) => (
-              <div
-                key={`${payload.platformEventName}-${payload.canonicalPayloadName}-${payloadIndex}`}
-                className="rounded-md border border-line bg-mist p-3"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="font-semibold text-ink">{payload.platformEventName}</div>
-                    <div className="text-xs font-semibold uppercase text-slate-500">{payload.adFamily}</div>
+          <div className="mb-3 flex flex-col justify-between gap-3 md:flex-row md:items-start">
+            <div>
+              <h3 className="font-bold text-ink">Platform Ad Payload Enrichment</h3>
+              <p className="mt-1 text-sm text-slate-600">
+                These are additional payloads for platform-triggered ad events, not manual ad lifecycle specs.
+              </p>
+            </div>
+            <span className="w-fit rounded bg-sage px-2 py-1 text-xs font-semibold uppercase text-slate-600">
+              {spec.platformAdPayloads.length} payloads
+            </span>
+          </div>
+
+          <div className="mb-3 flex items-center gap-3">
+            <Search className="h-4 w-4 text-slate-500" />
+            <input
+              value={adPayloadFilter}
+              onChange={(event) => setAdPayloadFilter(event.target.value)}
+              placeholder="Filter ad payloads..."
+              className="focus-ring w-full rounded-md border border-line px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+            <div className="max-h-[560px] overflow-auto rounded-md border border-line bg-mist">
+              <div className="sticky top-0 border-b border-line bg-sage px-3 py-2 text-xs font-semibold uppercase text-slate-600">
+                Platform Payloads
+              </div>
+              <div className="divide-y divide-line">
+                {filteredAdPayloadIndexes.map((payloadIndex) => {
+                  const payload = spec.platformAdPayloads[payloadIndex];
+                  const isSelected = payloadIndex === activeAdPayloadIndex;
+                  return (
+                    <button
+                      key={`${payload.platformEventName}-${payload.canonicalPayloadName}-${payloadIndex}`}
+                      type="button"
+                      onClick={() => setSelectedAdPayloadIndex(payloadIndex)}
+                      className={`focus-ring block w-full px-3 py-3 text-left text-sm ${
+                        isSelected ? "bg-white shadow-sm" : "hover:bg-white/70"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-ink">{payload.platformEventName}</div>
+                          <div className="mt-1 truncate text-xs text-slate-600">{payload.adFamily}</div>
+                        </div>
+                        <span className="shrink-0 rounded bg-white px-2 py-1 text-[11px] font-semibold text-slate-600">
+                          {payload.requiredness}
+                        </span>
+                      </div>
+                      <div className="mt-2 truncate font-mono text-xs font-semibold text-slate-700">
+                        {payload.canonicalPayloadName}
+                      </div>
+                      <div className="mt-2 line-clamp-2 text-xs text-slate-500">{payload.example}</div>
+                    </button>
+                  );
+                })}
+                {!filteredAdPayloadIndexes.length ? (
+                  <div className="px-3 py-8 text-center text-sm text-slate-500">No matching ad payloads</div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="rounded-md border border-line bg-white p-4">
+              {selectedAdPayload ? (
+                <div className="space-y-5">
+                  <div className="flex flex-col justify-between gap-3 border-b border-line pb-4 md:flex-row md:items-start">
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-500">Ad Payload Details</div>
+                      <h4 className="mt-1 text-lg font-bold text-ink">{selectedAdPayload.canonicalPayloadName}</h4>
+                      <p className="text-sm text-slate-600">{selectedAdPayload.platformEventName}</p>
+                    </div>
+                    <span className="w-fit rounded bg-sage px-2 py-1 text-xs font-semibold uppercase text-slate-600">
+                      {selectedAdPayload.requiredness}
+                    </span>
                   </div>
-                  <span className="rounded bg-white px-2 py-1 text-xs font-semibold text-slate-600">
-                    {payload.requiredness}
-                  </span>
-                </div>
-                <div className="mt-3 grid gap-3 md:grid-cols-[180px_1fr]">
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="rounded-md border border-line bg-mist p-3">
+                      <div className="text-xs font-semibold uppercase text-slate-500">Platform Event</div>
+                      <div className="mt-1 break-words text-sm font-semibold text-ink">
+                        {selectedAdPayload.platformEventName}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-line bg-mist p-3">
+                      <div className="text-xs font-semibold uppercase text-slate-500">Ad Family</div>
+                      <div className="mt-1 break-words text-sm font-semibold text-ink">{selectedAdPayload.adFamily}</div>
+                    </div>
+                    <div className="rounded-md border border-line bg-mist p-3">
+                      <div className="text-xs font-semibold uppercase text-slate-500">Requiredness</div>
+                      <div className="mt-1 break-words text-sm font-semibold text-ink">
+                        {selectedAdPayload.requiredness}
+                      </div>
+                    </div>
+                  </div>
+
                   <label className="block">
-                    <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Payload</span>
+                    <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Payload Name</span>
                     <input
-                      aria-label={`${payload.platformEventName} platform payload name ${payloadIndex + 1}`}
-                      value={payload.canonicalPayloadName}
+                      aria-label={`${selectedAdPayload.platformEventName} platform payload name ${activeAdPayloadIndex + 1}`}
+                      value={selectedAdPayload.canonicalPayloadName}
                       onChange={(event) =>
-                        updatePlatformAdPayload(payloadIndex, {
+                        updatePlatformAdPayload(activeAdPayloadIndex, {
                           payloadName: event.target.value,
                           canonicalPayloadName: event.target.value,
                         })
                       }
-                      className="focus-ring h-9 w-full rounded-md border border-line bg-white px-2 text-sm font-semibold"
+                      className="focus-ring h-11 w-full rounded-md border border-line px-3 text-sm font-semibold"
                     />
                   </label>
+
                   <label className="block">
-                    <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Description</span>
+                    <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Description</span>
                     <textarea
-                      aria-label={`${payload.platformEventName} ${payload.canonicalPayloadName} platform description`}
-                      value={payload.description}
-                      onChange={(event) => updatePlatformAdPayload(payloadIndex, { description: event.target.value })}
-                      className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-2 py-1 text-sm"
+                      aria-label={`${selectedAdPayload.platformEventName} ${selectedAdPayload.canonicalPayloadName} platform description`}
+                      value={selectedAdPayload.description}
+                      onChange={(event) => updatePlatformAdPayload(activeAdPayloadIndex, { description: event.target.value })}
+                      className="focus-ring min-h-24 w-full rounded-md border border-line px-3 py-2 text-sm"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Example</span>
+                    <textarea
+                      aria-label={`${selectedAdPayload.platformEventName} ${selectedAdPayload.canonicalPayloadName} platform example`}
+                      value={selectedAdPayload.example}
+                      onChange={(event) => updatePlatformAdPayload(activeAdPayloadIndex, { example: event.target.value })}
+                      className="focus-ring min-h-20 w-full rounded-md border border-line px-3 py-2 font-mono text-sm"
                     />
                   </label>
                 </div>
-                <label className="mt-3 block">
-                  <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Example</span>
-                  <textarea
-                    aria-label={`${payload.platformEventName} ${payload.canonicalPayloadName} platform example`}
-                    value={payload.example}
-                    onChange={(event) => updatePlatformAdPayload(payloadIndex, { example: event.target.value })}
-                    className="focus-ring min-h-16 w-full rounded-md border border-line bg-white px-2 py-1 text-sm"
-                  />
-                </label>
-              </div>
-            ))}
+              ) : (
+                <div className="rounded-md border border-dashed border-line p-10 text-center text-sm text-slate-500">
+                  Select an ad payload to review its details.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       ) : null}

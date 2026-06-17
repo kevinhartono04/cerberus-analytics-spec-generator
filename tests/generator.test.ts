@@ -103,12 +103,79 @@ describe("analytics generator", () => {
     expect(gameEnd?.payloadFields.map((payload) => payload.canonicalFieldName)).not.toContain("powerup_{name}_used");
 
     const itemTransaction = spec.generatedEvents.find((event) => event.eventName === "Item_Transaction");
-    const currencyTransaction = spec.generatedEvents.find((event) => event.eventName === "Currency_Transaction");
     expect(itemTransaction?.payloadFields.find((payload) => payload.canonicalFieldName === "item")?.example).toBe(
       '"powerup_shuffle", "powerup_magic_wand"',
     );
-    expect(currencyTransaction?.payloadFields.find((payload) => payload.canonicalFieldName === "item")?.example).toBe(
-      '"powerup_shuffle", "powerup_magic_wand"',
+  });
+
+  it("keeps game_length as a core Game_End payload", () => {
+    const spec = generateSpecFromRules(baseIntake, getLibrarySnapshot());
+    const gameEndPayloads = spec.generatedEvents
+      .find((event) => event.eventName === "Game_End")
+      ?.payloadFields.map((payload) => payload.canonicalFieldName);
+
+    expect(gameEndPayloads).toContain("game_length");
+    expect(gameEndPayloads).not.toContain("game_end_reason");
+    expect(gameEndPayloads).not.toContain("time_limit");
+    expect(gameEndPayloads).not.toContain("time_per_match");
+  });
+
+  it("maps Limited time only to time_limit and Match objectives to time_per_match", () => {
+    const timedSpec = generateSpecFromRules({ ...baseIntake, mechanics: "Limited time" }, getLibrarySnapshot());
+    const timedPayloads = timedSpec.generatedEvents
+      .find((event) => event.eventName === "Game_End")
+      ?.payloadFields.map((payload) => payload.canonicalFieldName);
+
+    expect(timedPayloads).toContain("game_length");
+    expect(timedPayloads).toContain("time_limit");
+    expect(timedPayloads).not.toContain("time_per_match");
+
+    const objectiveSpec = generateSpecFromRules({ ...baseIntake, mechanics: "Match objectives" }, getLibrarySnapshot());
+    const objectivePayloads = objectiveSpec.generatedEvents
+      .find((event) => event.eventName === "Game_End")
+      ?.payloadFields.map((payload) => payload.canonicalFieldName);
+
+    expect(objectivePayloads).toContain("game_length");
+    expect(objectivePayloads).toContain("time_per_match");
+    expect(objectivePayloads).not.toContain("time_limit");
+  });
+
+  it("does not include game-specific revive and play-on reason payloads", () => {
+    const spec = generateSpecFromRules({ ...baseIntake, mechanics: "Revive, Play-on" }, getLibrarySnapshot());
+    const gameEndPayloads = spec.generatedEvents
+      .find((event) => event.eventName === "Game_End")
+      ?.payloadFields.map((payload) => payload.canonicalFieldName);
+
+    expect(gameEndPayloads).toContain("revives_used");
+    expect(gameEndPayloads).toContain("playons_used");
+    expect(gameEndPayloads).not.toContain("revives_delivery_failed_used");
+    expect(gameEndPayloads).not.toContain("revives_out_of_time_used");
+    expect(gameEndPayloads).not.toContain("playon_delivery_failed_used");
+    expect(gameEndPayloads).not.toContain("playon_out_of_time_used");
+  });
+
+  it("maps Currency and Item Inventory to separate transaction events", () => {
+    const currencySpec = generateSpecFromRules({ ...baseIntake, economy: "Currency" }, getLibrarySnapshot());
+    expect(currencySpec.generatedEvents.map((event) => event.eventName)).toContain("Currency_Transaction");
+    expect(currencySpec.generatedEvents.map((event) => event.eventName)).not.toContain("Item_Transaction");
+
+    const itemSpec = generateSpecFromRules({ ...baseIntake, economy: "Item inventory" }, getLibrarySnapshot());
+    expect(itemSpec.generatedEvents.map((event) => event.eventName)).toContain("Item_Transaction");
+    expect(itemSpec.generatedEvents.map((event) => event.eventName)).not.toContain("Currency_Transaction");
+  });
+
+  it("adds item examples for revive, play-on, and lives item transactions", () => {
+    const spec = generateSpecFromRules(
+      {
+        ...baseIntake,
+        mechanics: "Revive, Play-on",
+        economy: "Lives / energy",
+      },
+      getLibrarySnapshot(),
+    );
+    const itemTransaction = spec.generatedEvents.find((event) => event.eventName === "Item_Transaction");
+    expect(itemTransaction?.payloadFields.find((payload) => payload.canonicalFieldName === "item")?.example).toBe(
+      '"revive", "playon", "lives"',
     );
   });
 

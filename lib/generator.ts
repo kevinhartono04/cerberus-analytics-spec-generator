@@ -18,7 +18,7 @@ export function selectFeaturePacks(intake: GameIntake) {
     intake.mechanics,
     intake.winConditions,
     intake.loseConditions,
-      intake.economy,
+    intake.economy,
     intake.itemsOrPowerups,
     intake.powerupNames,
     intake.iap,
@@ -47,16 +47,19 @@ export function selectFeaturePacks(intake: GameIntake) {
       "purchase",
       "spend",
       "earn",
+      "revive",
+      "play-on",
+      "playon",
     ])
   ) {
     packs.add(PACKS.economy);
   }
 
-  if (containsAny(text, ["iap", "store", "shop", "bundle", "product", "ad remove", "no ads", "paid"])) {
+  if (containsAny(text, ["iap", "store", "shop", "bundle", "product", "paid"])) {
     packs.add(PACKS.iap);
   }
 
-  if (containsAny(text, ["live ops", "liveops", "event", "season", "mission", "daily challenge", "leaderboard"])) {
+  if (containsAny(text, ["live ops", "liveops", "event", "season", "mission", "milestone", "daily challenge", "leaderboard"])) {
     packs.add(PACKS.liveOps);
   }
 
@@ -91,18 +94,108 @@ function powerupSlugs(intake: GameIntake) {
     .filter(Boolean);
 }
 
+function intakeText(intake: GameIntake) {
+  return [
+    intake.genre,
+    intake.coreLoop,
+    intake.gameModes,
+    intake.mechanics,
+    intake.winConditions,
+    intake.loseConditions,
+    intake.economy,
+    intake.itemsOrPowerups,
+    intake.powerupNames,
+    intake.iap,
+    intake.ads,
+    intake.rewardedAdPlacements,
+    intake.interstitialAdPlacements,
+    intake.liveOps,
+    intake.notes,
+  ].join(" ");
+}
+
+function hasMechanic(intake: GameIntake, label: string) {
+  return splitValues(intake.mechanics).some((mechanic) => mechanic.toLowerCase() === label.toLowerCase());
+}
+
+function hasEconomyOption(intake: GameIntake, label: string) {
+  return splitValues(intake.economy).some((option) => option.toLowerCase() === label.toLowerCase());
+}
+
+function itemTransactionExamples(intake: GameIntake) {
+  const examples = [
+    ...powerupSlugs(intake).map((name) => `powerup_${name}`),
+    hasMechanic(intake, "Revive") ? "revive" : "",
+    hasMechanic(intake, "Play-on") ? "playon" : "",
+    hasEconomyOption(intake, "Lives / energy") ? "lives" : "",
+  ].filter(Boolean);
+  return [...new Set(examples)].map((item) => `"${item}"`).join(", ");
+}
+
+function shouldIncludeEvent(eventName: string, intake: GameIntake) {
+  const text = intakeText(intake);
+  if (eventName === "Currency_Transaction") {
+    return hasEconomyOption(intake, "Currency") || containsAny(text, ["currency", "coin", "coins"]);
+  }
+  if (eventName === "Item_Transaction") {
+    return (
+      hasEconomyOption(intake, "Item inventory") ||
+      hasEconomyOption(intake, "Lives / energy") ||
+      hasMechanic(intake, "Powerups") ||
+      hasMechanic(intake, "Revive") ||
+      hasMechanic(intake, "Play-on") ||
+      Boolean(powerupSlugs(intake).length) ||
+      containsAny(text, ["item inventory", "inventory", "life", "lives", "powerup", "power-up"])
+    );
+  }
+  return true;
+}
+
+function shouldIncludePayload(fieldName: string, eventName: string, intake: GameIntake) {
+  const field = canonicalFieldName(fieldName);
+  const text = intakeText(intake);
+  const hasPowerups = hasMechanic(intake, "Powerups") || Boolean(powerupSlugs(intake).length);
+  const alwaysExcludedFields = new Set([
+    "game_end_reason",
+    "revives_delivery_failed_used",
+    "revives_out_of_time_used",
+    "playon_delivery_failed_used",
+    "playon_out_of_time_used",
+  ]);
+
+  if (alwaysExcludedFields.has(field)) return false;
+
+  const optionalFields: Record<string, boolean> = {
+    difficulty: hasMechanic(intake, "Difficulty tiers"),
+    move_count: hasMechanic(intake, "Limited moves"),
+    time_limit: hasMechanic(intake, "Limited time"),
+    time_per_match: hasMechanic(intake, "Match objectives"),
+    match_done: hasMechanic(intake, "Match objectives"),
+    powerup_used: hasPowerups,
+    rv_powerup_used: hasPowerups,
+    revives_used: hasMechanic(intake, "Revive"),
+    playons_used: hasMechanic(intake, "Play-on"),
+    extra_grill_used: containsAny(text, ["extra grill", "extra slot"]),
+    skip_delivery_used: containsAny(text, ["skip delivery", "skip objective"]),
+    possible_matches: containsAny(text, ["possible matches"]),
+  };
+
+  if (/^powerup_.+_used$/.test(field)) return hasPowerups;
+  if (field in optionalFields) return optionalFields[field];
+
+  if (eventName !== "Game_Start" && eventName !== "Game_End") {
+    if (field === "move_count") return hasMechanic(intake, "Limited moves");
+  }
+
+  return true;
+}
+
 function slugify(value: string) {
   return value
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
-}
-
-function powerupItemExamples(intake: GameIntake) {
-  return powerupSlugs(intake)
-    .map((name) => `"powerup_${name}"`)
-    .join(", ");
 }
 
 function adFamiliesForIntake(intake: GameIntake) {
@@ -132,7 +225,7 @@ function placementExampleFor(intake: GameIntake, adFamily: string) {
 function payloadsForEvent(snapshot: LibrarySnapshot, eventName: string, intake: GameIntake) {
   const seen = new Set<string>();
   const slugs = powerupSlugs(intake);
-  const itemExamples = powerupItemExamples(intake);
+  const itemExamples = itemTransactionExamples(intake);
   const payloads = snapshot.payloads
     .filter((payload) => payload.eventName === eventName)
     .filter((payload) => {
@@ -147,6 +240,7 @@ function payloadsForEvent(snapshot: LibrarySnapshot, eventName: string, intake: 
       seen.add(key);
       return true;
     })
+    .filter((payload) => shouldIncludePayload(payload.canonicalFieldName || payload.fieldName, eventName, intake))
     .map((payload) => ({
       fieldName: payload.fieldName,
       canonicalFieldName: canonicalFieldName(payload.canonicalFieldName || payload.fieldName),
@@ -154,12 +248,12 @@ function payloadsForEvent(snapshot: LibrarySnapshot, eventName: string, intake: 
       requiredness: payload.requiredness,
       description: payload.fieldDescription,
       example:
-        itemExamples && payload.eventName.includes("Transaction") && canonicalFieldName(payload.canonicalFieldName || payload.fieldName) === "item"
+        itemExamples && payload.eventName === "Item_Transaction" && canonicalFieldName(payload.canonicalFieldName || payload.fieldName) === "item"
           ? itemExamples
           : payload.example,
       notes:
-        itemExamples && payload.eventName.includes("Transaction") && canonicalFieldName(payload.canonicalFieldName || payload.fieldName) === "item"
-          ? [payload.note, "Example generated from Powerup Names intake."].filter(Boolean).join(" ")
+        itemExamples && payload.eventName === "Item_Transaction" && canonicalFieldName(payload.canonicalFieldName || payload.fieldName) === "item"
+          ? [payload.note, "Example generated from selected item-producing mechanics and intake options."].filter(Boolean).join(" ")
           : payload.note,
     }));
 
@@ -214,7 +308,9 @@ function reasonFor(eventName: string, pack: string, intake: GameIntake) {
 
 export function generateSpecFromRules(intake: GameIntake, snapshot: LibrarySnapshot): GeneratedSpec {
   const selectedFeaturePacks = selectFeaturePacks(intake);
-  const eventRows = snapshot.events.filter((event) => selectedFeaturePacks.includes(event.featurePack));
+  const eventRows = snapshot.events
+    .filter((event) => selectedFeaturePacks.includes(event.featurePack))
+    .filter((event) => shouldIncludeEvent(event.eventName, intake));
   const generatedEvents: GeneratedEvent[] = eventRows.map((event) => ({
     eventName: event.eventName,
     category: event.category,
