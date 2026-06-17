@@ -157,10 +157,12 @@ function shouldIncludePayload(fieldName: string, eventName: string, intake: Game
   const hasPowerups = hasMechanic(intake, "Powerups") || Boolean(powerupSlugs(intake).length);
   const alwaysExcludedFields = new Set([
     "game_end_reason",
+    "illegal_regions",
     "revives_delivery_failed_used",
     "revives_out_of_time_used",
     "playon_delivery_failed_used",
     "playon_out_of_time_used",
+    "worms_target",
   ]);
 
   if (alwaysExcludedFields.has(field)) return false;

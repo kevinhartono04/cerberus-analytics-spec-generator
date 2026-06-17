@@ -248,6 +248,57 @@ function reviewStatusForEvents(events: GeneratedEvent[]) {
   return "Draft";
 }
 
+type PlatformAdPayloadRow = GeneratedSpec["platformAdPayloads"][number];
+
+type AdPayloadGroup = {
+  key: string;
+  adFamily: string;
+  canonicalPayloadName: string;
+  payloadName: string;
+  description: string;
+  example: string;
+  requiredness: string;
+  platformEventNames: string[];
+  rowIndexes: number[];
+};
+
+function adPayloadGroupKey(adFamily: string, canonicalPayloadName: string) {
+  return `${adFamily}::${canonicalPayloadName}`;
+}
+
+function adPayloadGroupsFor(payloads: PlatformAdPayloadRow[]) {
+  const groups = new Map<string, AdPayloadGroup>();
+
+  payloads.forEach((payload, index) => {
+    const key = adPayloadGroupKey(payload.adFamily, payload.canonicalPayloadName);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.rowIndexes.push(index);
+      if (!existing.platformEventNames.includes(payload.platformEventName)) {
+        existing.platformEventNames.push(payload.platformEventName);
+      }
+      return;
+    }
+
+    groups.set(key, {
+      key,
+      adFamily: payload.adFamily,
+      canonicalPayloadName: payload.canonicalPayloadName,
+      payloadName: payload.payloadName,
+      description: payload.description,
+      example: payload.example,
+      requiredness: payload.requiredness,
+      platformEventNames: [payload.platformEventName],
+      rowIndexes: [index],
+    });
+  });
+
+  return [...groups.values()].sort(
+    (left, right) =>
+      left.adFamily.localeCompare(right.adFamily) || left.canonicalPayloadName.localeCompare(right.canonicalPayloadName),
+  );
+}
+
 function PayloadDetailsEditor({
   eventName,
   payloadFields,
@@ -446,7 +497,7 @@ function SpecReview({
   const [globalFilter, setGlobalFilter] = useState("");
   const [selectedEventIndex, setSelectedEventIndex] = useState(0);
   const [adPayloadFilter, setAdPayloadFilter] = useState("");
-  const [selectedAdPayloadIndex, setSelectedAdPayloadIndex] = useState(0);
+  const [selectedAdPayloadGroupKey, setSelectedAdPayloadGroupKey] = useState("");
   const filteredEventIndexes = useMemo(() => {
     if (!spec) return [];
     const lower = globalFilter.toLowerCase();
@@ -457,26 +508,24 @@ function SpecReview({
       )
       .map(({ index }) => index);
   }, [globalFilter, spec]);
-  const filteredAdPayloadIndexes = useMemo(() => {
+  const adPayloadGroups = useMemo(() => adPayloadGroupsFor(spec?.platformAdPayloads ?? []), [spec?.platformAdPayloads]);
+  const filteredAdPayloadGroups = useMemo(() => {
     if (!spec) return [];
     const lower = adPayloadFilter.toLowerCase();
-    return spec.platformAdPayloads
-      .map((payload, index) => ({ payload, index }))
-      .filter(({ payload }) =>
-        [
-          payload.platformEventName,
-          payload.adFamily,
-          payload.canonicalPayloadName,
-          payload.description,
-          payload.example,
-          payload.requiredness,
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(lower),
-      )
-      .map(({ index }) => index);
-  }, [adPayloadFilter, spec]);
+    return adPayloadGroups.filter((group) =>
+      [
+        group.adFamily,
+        group.canonicalPayloadName,
+        group.description,
+        group.example,
+        group.requiredness,
+        ...group.platformEventNames,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(lower),
+    );
+  }, [adPayloadFilter, adPayloadGroups, spec]);
 
   useEffect(() => {
     if (!spec?.generatedEvents.length) {
@@ -489,14 +538,14 @@ function SpecReview({
   }, [selectedEventIndex, spec?.generatedEvents.length]);
 
   useEffect(() => {
-    if (!spec?.platformAdPayloads.length) {
-      setSelectedAdPayloadIndex(0);
+    if (!adPayloadGroups.length) {
+      setSelectedAdPayloadGroupKey("");
       return;
     }
-    if (selectedAdPayloadIndex >= spec.platformAdPayloads.length) {
-      setSelectedAdPayloadIndex(spec.platformAdPayloads.length - 1);
+    if (!adPayloadGroups.some((group) => group.key === selectedAdPayloadGroupKey)) {
+      setSelectedAdPayloadGroupKey(adPayloadGroups[0].key);
     }
-  }, [selectedAdPayloadIndex, spec?.platformAdPayloads.length]);
+  }, [adPayloadGroups, selectedAdPayloadGroupKey]);
 
   function updateEvent(rowIndex: number, patch: Partial<GeneratedEvent>) {
     if (!spec) return;
@@ -546,13 +595,14 @@ function SpecReview({
     });
   }
 
-  function updatePlatformAdPayload(
-    payloadIndex: number,
+  function updatePlatformAdPayloadGroup(
+    group: AdPayloadGroup,
     patch: Partial<GeneratedSpec["platformAdPayloads"][number]>,
   ) {
     if (!spec) return;
+    const targetRows = new Set(group.rowIndexes);
     const platformAdPayloads = spec.platformAdPayloads.map((payload, index) =>
-      index === payloadIndex ? { ...payload, ...patch } : payload,
+      targetRows.has(index) ? { ...payload, ...patch } : payload,
     );
     setSpec({ ...spec, platformAdPayloads });
   }
@@ -568,10 +618,8 @@ function SpecReview({
   }
 
   const selectedEvent = spec.generatedEvents[selectedEventIndex] ?? null;
-  const activeAdPayloadIndex = filteredAdPayloadIndexes.includes(selectedAdPayloadIndex)
-    ? selectedAdPayloadIndex
-    : (filteredAdPayloadIndexes[0] ?? selectedAdPayloadIndex);
-  const selectedAdPayload = spec.platformAdPayloads[activeAdPayloadIndex] ?? null;
+  const selectedAdPayloadGroup =
+    filteredAdPayloadGroups.find((group) => group.key === selectedAdPayloadGroupKey) ?? filteredAdPayloadGroups[0] ?? null;
 
   return (
     <section className="space-y-6">
@@ -740,11 +788,11 @@ function SpecReview({
             <div>
               <h3 className="font-bold text-ink">Platform Ad Payload Enrichment</h3>
               <p className="mt-1 text-sm text-slate-600">
-                These are additional payloads for platform-triggered ad events, not manual ad lifecycle specs.
+                Edit one payload definition per ad type. Changes apply to every platform-triggered event in that ad type.
               </p>
             </div>
             <span className="w-fit rounded bg-sage px-2 py-1 text-xs font-semibold uppercase text-slate-600">
-              {spec.platformAdPayloads.length} payloads
+              {adPayloadGroups.length} payload definitions
             </span>
           </div>
 
@@ -761,72 +809,65 @@ function SpecReview({
           <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
             <div className="max-h-[560px] overflow-auto rounded-md border border-line bg-mist">
               <div className="sticky top-0 border-b border-line bg-sage px-3 py-2 text-xs font-semibold uppercase text-slate-600">
-                Platform Payloads
+                Ad Payload Definitions
               </div>
               <div className="divide-y divide-line">
-                {filteredAdPayloadIndexes.map((payloadIndex) => {
-                  const payload = spec.platformAdPayloads[payloadIndex];
-                  const isSelected = payloadIndex === activeAdPayloadIndex;
+                {filteredAdPayloadGroups.map((group) => {
+                  const isSelected = group.key === selectedAdPayloadGroup?.key;
                   return (
                     <button
-                      key={`${payload.platformEventName}-${payload.canonicalPayloadName}-${payloadIndex}`}
+                      key={group.key}
                       type="button"
-                      onClick={() => setSelectedAdPayloadIndex(payloadIndex)}
+                      onClick={() => setSelectedAdPayloadGroupKey(group.key)}
                       className={`focus-ring block w-full px-3 py-3 text-left text-sm ${
                         isSelected ? "bg-white shadow-sm" : "hover:bg-white/70"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="truncate font-semibold text-ink">{payload.platformEventName}</div>
-                          <div className="mt-1 truncate text-xs text-slate-600">{payload.adFamily}</div>
+                          <div className="truncate font-semibold text-ink">{group.canonicalPayloadName}</div>
+                          <div className="mt-1 truncate text-xs text-slate-600">{group.adFamily} Ads</div>
                         </div>
                         <span className="shrink-0 rounded bg-white px-2 py-1 text-[11px] font-semibold text-slate-600">
-                          {payload.requiredness}
+                          {group.platformEventNames.length} events
                         </span>
                       </div>
-                      <div className="mt-2 truncate font-mono text-xs font-semibold text-slate-700">
-                        {payload.canonicalPayloadName}
-                      </div>
-                      <div className="mt-2 line-clamp-2 text-xs text-slate-500">{payload.example}</div>
+                      <div className="mt-2 line-clamp-2 text-xs text-slate-500">{group.description}</div>
+                      <div className="mt-2 truncate font-mono text-xs text-slate-700">{group.example}</div>
                     </button>
                   );
                 })}
-                {!filteredAdPayloadIndexes.length ? (
+                {!filteredAdPayloadGroups.length ? (
                   <div className="px-3 py-8 text-center text-sm text-slate-500">No matching ad payloads</div>
                 ) : null}
               </div>
             </div>
 
             <div className="rounded-md border border-line bg-white p-4">
-              {selectedAdPayload ? (
+              {selectedAdPayloadGroup ? (
                 <div className="space-y-5">
                   <div className="flex flex-col justify-between gap-3 border-b border-line pb-4 md:flex-row md:items-start">
                     <div>
-                      <div className="text-xs font-semibold uppercase text-slate-500">Ad Payload Details</div>
-                      <h4 className="mt-1 text-lg font-bold text-ink">{selectedAdPayload.canonicalPayloadName}</h4>
-                      <p className="text-sm text-slate-600">{selectedAdPayload.platformEventName}</p>
+                      <div className="text-xs font-semibold uppercase text-slate-500">Ad Payload Definition</div>
+                      <h4 className="mt-1 text-lg font-bold text-ink">{selectedAdPayloadGroup.canonicalPayloadName}</h4>
+                      <p className="text-sm text-slate-600">
+                        Applies to all {selectedAdPayloadGroup.adFamily.toLowerCase()} platform ad events.
+                      </p>
                     </div>
                     <span className="w-fit rounded bg-sage px-2 py-1 text-xs font-semibold uppercase text-slate-600">
-                      {selectedAdPayload.requiredness}
+                      {selectedAdPayloadGroup.requiredness}
                     </span>
                   </div>
 
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <div className="rounded-md border border-line bg-mist p-3">
-                      <div className="text-xs font-semibold uppercase text-slate-500">Platform Event</div>
-                      <div className="mt-1 break-words text-sm font-semibold text-ink">
-                        {selectedAdPayload.platformEventName}
-                      </div>
-                    </div>
+                  <div className="grid gap-3 md:grid-cols-[180px_1fr]">
                     <div className="rounded-md border border-line bg-mist p-3">
                       <div className="text-xs font-semibold uppercase text-slate-500">Ad Family</div>
-                      <div className="mt-1 break-words text-sm font-semibold text-ink">{selectedAdPayload.adFamily}</div>
+                      <div className="mt-1 break-words text-sm font-semibold text-ink">{selectedAdPayloadGroup.adFamily}</div>
                     </div>
                     <div className="rounded-md border border-line bg-mist p-3">
-                      <div className="text-xs font-semibold uppercase text-slate-500">Requiredness</div>
+                      <div className="text-xs font-semibold uppercase text-slate-500">Affected Events</div>
                       <div className="mt-1 break-words text-sm font-semibold text-ink">
-                        {selectedAdPayload.requiredness}
+                        {selectedAdPayloadGroup.platformEventNames.join(", ")}
                       </div>
                     </div>
                   </div>
@@ -834,24 +875,43 @@ function SpecReview({
                   <label className="block">
                     <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Payload Name</span>
                     <input
-                      aria-label={`${selectedAdPayload.platformEventName} platform payload name ${activeAdPayloadIndex + 1}`}
-                      value={selectedAdPayload.canonicalPayloadName}
-                      onChange={(event) =>
-                        updatePlatformAdPayload(activeAdPayloadIndex, {
-                          payloadName: event.target.value,
-                          canonicalPayloadName: event.target.value,
-                        })
-                      }
+                      data-testid="ad-payload-name"
+                      aria-label={`${selectedAdPayloadGroup.adFamily} ${selectedAdPayloadGroup.canonicalPayloadName} payload name`}
+                      value={selectedAdPayloadGroup.canonicalPayloadName}
+                      onChange={(event) => {
+                        const nextName = event.target.value;
+                        updatePlatformAdPayloadGroup(selectedAdPayloadGroup, {
+                          payloadName: nextName,
+                          canonicalPayloadName: nextName,
+                        });
+                        setSelectedAdPayloadGroupKey(adPayloadGroupKey(selectedAdPayloadGroup.adFamily, nextName));
+                      }}
                       className="focus-ring h-11 w-full rounded-md border border-line px-3 text-sm font-semibold"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Requiredness</span>
+                    <input
+                      data-testid="ad-payload-requiredness"
+                      aria-label={`${selectedAdPayloadGroup.adFamily} ${selectedAdPayloadGroup.canonicalPayloadName} requiredness`}
+                      value={selectedAdPayloadGroup.requiredness}
+                      onChange={(event) =>
+                        updatePlatformAdPayloadGroup(selectedAdPayloadGroup, { requiredness: event.target.value })
+                      }
+                      className="focus-ring h-11 w-full rounded-md border border-line px-3 text-sm"
                     />
                   </label>
 
                   <label className="block">
                     <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Description</span>
                     <textarea
-                      aria-label={`${selectedAdPayload.platformEventName} ${selectedAdPayload.canonicalPayloadName} platform description`}
-                      value={selectedAdPayload.description}
-                      onChange={(event) => updatePlatformAdPayload(activeAdPayloadIndex, { description: event.target.value })}
+                      data-testid="ad-payload-description"
+                      aria-label={`${selectedAdPayloadGroup.adFamily} ${selectedAdPayloadGroup.canonicalPayloadName} platform description`}
+                      value={selectedAdPayloadGroup.description}
+                      onChange={(event) =>
+                        updatePlatformAdPayloadGroup(selectedAdPayloadGroup, { description: event.target.value })
+                      }
                       className="focus-ring min-h-24 w-full rounded-md border border-line px-3 py-2 text-sm"
                     />
                   </label>
@@ -859,9 +919,10 @@ function SpecReview({
                   <label className="block">
                     <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Example</span>
                     <textarea
-                      aria-label={`${selectedAdPayload.platformEventName} ${selectedAdPayload.canonicalPayloadName} platform example`}
-                      value={selectedAdPayload.example}
-                      onChange={(event) => updatePlatformAdPayload(activeAdPayloadIndex, { example: event.target.value })}
+                      data-testid="ad-payload-example"
+                      aria-label={`${selectedAdPayloadGroup.adFamily} ${selectedAdPayloadGroup.canonicalPayloadName} platform example`}
+                      value={selectedAdPayloadGroup.example}
+                      onChange={(event) => updatePlatformAdPayloadGroup(selectedAdPayloadGroup, { example: event.target.value })}
                       className="focus-ring min-h-20 w-full rounded-md border border-line px-3 py-2 font-mono text-sm"
                     />
                   </label>
@@ -984,6 +1045,139 @@ type SpecViewerRow = {
   status: string;
 };
 
+type SpecViewerGroupId = "gameplay" | "economy" | "iap" | "iaa" | "liveOps" | "other";
+
+type SpecViewerGroup = {
+  id: SpecViewerGroupId;
+  label: string;
+  description: string;
+  events: GeneratedEvent[];
+  platformAdPayloads: PlatformAdPayloadRow[];
+};
+
+const specViewerGroupMeta: Array<Pick<SpecViewerGroup, "id" | "label" | "description">> = [
+  {
+    id: "gameplay",
+    label: "Gameplay",
+    description: "Core round lifecycle specs: Game_Start and Game_End.",
+  },
+  {
+    id: "economy",
+    label: "Economy",
+    description: "Currency_Transaction and Item_Transaction specs.",
+  },
+  {
+    id: "iap",
+    label: "IAP",
+    description: "Store_Open and Store_Product_Purchase_* specs.",
+  },
+  {
+    id: "iaa",
+    label: "IAA",
+    description: "Platform ad event payload specs for Ad_* events.",
+  },
+  {
+    id: "liveOps",
+    label: "Live Ops",
+    description: "Event_Start, Event_Progress, and Event_End specs.",
+  },
+  {
+    id: "other",
+    label: "Other",
+    description: "Additional custom or uncategorized event specs.",
+  },
+];
+
+function groupIdForEventName(eventName: string): SpecViewerGroupId {
+  if (eventName === "Game_Start" || eventName === "Game_End") return "gameplay";
+  if (eventName === "Currency_Transaction" || eventName === "Item_Transaction") return "economy";
+  if (eventName === "Store_Open" || eventName.startsWith("Store_Product_Purchase_")) return "iap";
+  if (eventName.startsWith("Ad_")) return "iaa";
+  if (eventName.startsWith("Event_")) return "liveOps";
+  return "other";
+}
+
+function payloadCountForEvents(events: GeneratedEvent[]) {
+  return events.reduce((total, event) => total + event.payloadFields.length, 0);
+}
+
+function platformEventCount(payloads: PlatformAdPayloadRow[]) {
+  return new Set(payloads.map((payload) => payload.platformEventName)).size;
+}
+
+function specViewerGroupsFor(spec: GeneratedSpec): SpecViewerGroup[] {
+  const groups = new Map<SpecViewerGroupId, SpecViewerGroup>(
+    specViewerGroupMeta.map((meta) => [meta.id, { ...meta, events: [], platformAdPayloads: [] }]),
+  );
+
+  spec.generatedEvents.forEach((event) => {
+    groups.get(groupIdForEventName(event.eventName))?.events.push(event);
+  });
+
+  spec.platformAdPayloads.forEach((payload) => {
+    groups.get("iaa")?.platformAdPayloads.push(payload);
+  });
+
+  return [...groups.values()].filter((group) => group.events.length || group.platformAdPayloads.length);
+}
+
+function eventMatchesQuery(event: GeneratedEvent, lowerQuery: string) {
+  if (!lowerQuery) return true;
+  return [
+    event.eventName,
+    event.category,
+    event.featurePack,
+    event.trigger,
+    event.argumentName,
+    event.argumentDescription,
+    event.argumentExamples,
+    event.status,
+    ...event.payloadFields.flatMap((payload) => [
+      payload.canonicalFieldName,
+      payload.description,
+      payload.example,
+      payload.type,
+      payload.requiredness,
+      payload.notes,
+    ]),
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(lowerQuery);
+}
+
+function adPayloadMatchesQuery(payload: PlatformAdPayloadRow, lowerQuery: string) {
+  if (!lowerQuery) return true;
+  return [
+    payload.platformEventName,
+    payload.adFamily,
+    payload.canonicalPayloadName,
+    payload.description,
+    payload.example,
+    payload.requiredness,
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(lowerQuery);
+}
+
+function groupedPlatformAdPayloads(payloads: PlatformAdPayloadRow[]) {
+  const groups = new Map<string, { eventName: string; adFamily: string; payloads: PlatformAdPayloadRow[] }>();
+  payloads.forEach((payload) => {
+    const existing = groups.get(payload.platformEventName);
+    if (existing) {
+      existing.payloads.push(payload);
+      return;
+    }
+    groups.set(payload.platformEventName, {
+      eventName: payload.platformEventName,
+      adFamily: payload.adFamily,
+      payloads: [payload],
+    });
+  });
+  return [...groups.values()].sort((left, right) => left.eventName.localeCompare(right.eventName));
+}
+
 function rowsForSpec(spec: GeneratedSpec): SpecViewerRow[] {
   return spec.generatedEvents.flatMap((event) => {
     if (!event.payloadFields.length) {
@@ -1027,6 +1221,119 @@ function rowsForSpec(spec: GeneratedSpec): SpecViewerRow[] {
   });
 }
 
+function EventSpecCard({ event }: { event: GeneratedEvent }) {
+  return (
+    <article className="rounded-md border border-line bg-white shadow-sm">
+      <div className="border-b border-line px-4 py-3">
+        <div className="flex flex-col justify-between gap-2 md:flex-row md:items-start">
+          <div>
+            <h4 className="text-base font-bold text-ink">{event.eventName}</h4>
+            <p className="text-sm text-slate-600">{event.featurePack}</p>
+          </div>
+          <span className="w-fit rounded bg-mist px-2 py-1 text-xs font-semibold text-slate-600">{event.status}</span>
+        </div>
+        <p className="mt-3 text-sm text-slate-700">{event.trigger || "No trigger description yet."}</p>
+      </div>
+
+      {(event.argumentName || event.argumentDescription || event.argumentExamples) ? (
+        <div className="grid gap-3 border-b border-line bg-mist/50 px-4 py-3 md:grid-cols-3">
+          <div>
+            <div className="text-xs font-semibold uppercase text-slate-500">Argument</div>
+            <div className="mt-1 text-sm font-semibold text-ink">{event.argumentName || "-"}</div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase text-slate-500">Description</div>
+            <div className="mt-1 text-sm text-slate-700">{event.argumentDescription || "-"}</div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase text-slate-500">Examples</div>
+            <div className="mt-1 font-mono text-xs text-slate-700">{event.argumentExamples || "-"}</div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[880px] text-left text-sm">
+          <thead className="bg-sage text-xs uppercase text-slate-600">
+            <tr>
+              <th className="px-3 py-2">Payload</th>
+              <th className="px-3 py-2">Description</th>
+              <th className="px-3 py-2">Example</th>
+              <th className="px-3 py-2">Type</th>
+              <th className="px-3 py-2">Requiredness</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {event.payloadFields.map((payload, payloadIndex) => (
+              <tr key={`${event.eventName}-${payload.canonicalFieldName}-${payloadIndex}`}>
+                <td className="px-3 py-3 align-top font-semibold text-ink">{payload.canonicalFieldName}</td>
+                <td className="px-3 py-3 align-top text-slate-700">{payload.description}</td>
+                <td className="px-3 py-3 align-top font-mono text-xs text-slate-700">{payload.example}</td>
+                <td className="px-3 py-3 align-top">{payload.type}</td>
+                <td className="px-3 py-3 align-top">{payload.requiredness}</td>
+              </tr>
+            ))}
+            {!event.payloadFields.length ? (
+              <tr>
+                <td colSpan={5} className="px-3 py-6 text-center text-sm text-slate-500">
+                  No payloads specified for this event.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  );
+}
+
+function PlatformAdEventCard({
+  eventName,
+  adFamily,
+  payloads,
+}: {
+  eventName: string;
+  adFamily: string;
+  payloads: PlatformAdPayloadRow[];
+}) {
+  return (
+    <article className="rounded-md border border-line bg-white shadow-sm">
+      <div className="flex flex-col justify-between gap-2 border-b border-line px-4 py-3 md:flex-row md:items-start">
+        <div>
+          <h4 className="text-base font-bold text-ink">{eventName}</h4>
+          <p className="text-sm text-slate-600">{adFamily} platform ad event</p>
+        </div>
+        <span className="w-fit rounded bg-mist px-2 py-1 text-xs font-semibold text-slate-600">
+          {payloads.length} payloads
+        </span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-left text-sm">
+          <thead className="bg-sage text-xs uppercase text-slate-600">
+            <tr>
+              <th className="px-3 py-2">Payload</th>
+              <th className="px-3 py-2">Description</th>
+              <th className="px-3 py-2">Example</th>
+              <th className="px-3 py-2">Requiredness</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {payloads.map((payload, payloadIndex) => (
+              <tr key={`${payload.platformEventName}-${payload.canonicalPayloadName}-${payloadIndex}`}>
+                <td className="px-3 py-3 align-top font-semibold text-ink">{payload.canonicalPayloadName}</td>
+                <td className="px-3 py-3 align-top text-slate-700">{payload.description}</td>
+                <td className="px-3 py-3 align-top font-mono text-xs text-slate-700">{payload.example}</td>
+                <td className="px-3 py-3 align-top">{payload.requiredness}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  );
+}
+
 function SpecViewer({
   specs,
   savedSpecs,
@@ -1043,32 +1350,27 @@ function SpecViewer({
   onOpenEdit: (id: string) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
+  const [activeGroupId, setActiveGroupId] = useState<SpecViewerGroupId>("gameplay");
   const activeSpec = specs.find((item) => item.id === activeSpecId) ?? specs[0] ?? null;
-  const rows = useMemo(() => {
-    if (!activeSpec) return [];
+  const groups = useMemo(() => (activeSpec ? specViewerGroupsFor(activeSpec) : []), [activeSpec]);
+  const activeGroup = groups.find((group) => group.id === activeGroupId) ?? groups[0] ?? null;
+  const filteredGroupEvents = useMemo(() => {
+    if (!activeGroup) return [];
     const lower = query.toLowerCase();
-    return rowsForSpec(activeSpec).filter((row) =>
-      [
-        row.eventName,
-        row.category,
-        row.featurePack,
-        row.trigger,
-        row.argumentName,
-        row.argumentDescription,
-        row.argumentExamples,
-        row.payloadName,
-        row.payloadDescription,
-        row.payloadExample,
-        row.payloadType,
-        row.requiredness,
-        row.notes,
-        row.status,
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(lower),
-    );
-  }, [activeSpec, query]);
+    return activeGroup.events.filter((event) => eventMatchesQuery(event, lower));
+  }, [activeGroup, query]);
+  const filteredPlatformAdPayloadGroups = useMemo(() => {
+    if (!activeGroup) return [];
+    const lower = query.toLowerCase();
+    return groupedPlatformAdPayloads(activeGroup.platformAdPayloads.filter((payload) => adPayloadMatchesQuery(payload, lower)));
+  }, [activeGroup, query]);
+
+  useEffect(() => {
+    if (!groups.length) return;
+    if (!groups.some((group) => group.id === activeGroupId)) {
+      setActiveGroupId(groups[0].id);
+    }
+  }, [activeGroupId, groups]);
 
   if (isLoading) {
     return (
@@ -1153,109 +1455,97 @@ function SpecViewer({
           <Metric label="Updated" value={activeSummary ? new Date(activeSummary.updatedAt).toLocaleDateString() : "-"} />
         </div>
 
-        <div className="border-t border-line px-4 py-3">
-          <div className="flex items-center gap-3 rounded-md border border-line bg-white px-3 py-2 shadow-sm">
-            <Search className="h-4 w-4 text-slate-500" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search event names, triggers, payloads, examples..."
-              className="focus-ring w-full border-0 bg-transparent text-sm outline-none"
-            />
+        <div className="border-t border-line px-4 py-4">
+          <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Spec groups">
+            {groups.map((group) => {
+              const eventCount = group.events.length + platformEventCount(group.platformAdPayloads);
+              const payloadCount = payloadCountForEvents(group.events) + group.platformAdPayloads.length;
+              const isActive = group.id === activeGroup?.id;
+              return (
+                <button
+                  key={group.id}
+                  type="button"
+                  aria-label={`View ${group.label} spec group`}
+                  aria-selected={isActive}
+                  onClick={() => {
+                    setActiveGroupId(group.id);
+                    setQuery("");
+                  }}
+                  className={`focus-ring shrink-0 rounded-md border px-4 py-3 text-left text-sm ${
+                    isActive ? "border-cobalt bg-cobalt text-white shadow-sm" : "border-line bg-white text-slate-700 hover:bg-mist"
+                  }`}
+                >
+                  <div className="font-bold">{group.label}</div>
+                  <div className={`mt-1 text-xs ${isActive ? "text-white/80" : "text-slate-500"}`}>
+                    {eventCount} events · {payloadCount} payloads
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        <div className="max-h-[680px] overflow-auto border-t border-line">
-          <table className="w-full min-w-[1680px] border-separate border-spacing-0 text-left text-sm">
-            <thead className="sticky top-0 z-10 bg-sage text-xs uppercase text-slate-600">
-              <tr>
-                <th className="sticky left-0 z-20 min-w-56 border-b border-line bg-sage px-3 py-2">Event</th>
-                <th className="min-w-36 border-b border-line px-3 py-2">Category</th>
-                <th className="min-w-44 border-b border-line px-3 py-2">Feature Pack</th>
-                <th className="min-w-96 border-b border-line px-3 py-2">Trigger Condition</th>
-                <th className="min-w-40 border-b border-line px-3 py-2">Argument</th>
-                <th className="min-w-72 border-b border-line px-3 py-2">Argument Description</th>
-                <th className="min-w-56 border-b border-line px-3 py-2">Argument Examples</th>
-                <th className="min-w-48 border-b border-line px-3 py-2">Payload</th>
-                <th className="min-w-80 border-b border-line px-3 py-2">Payload Description</th>
-                <th className="min-w-56 border-b border-line px-3 py-2">Payload Example</th>
-                <th className="min-w-28 border-b border-line px-3 py-2">Type</th>
-                <th className="min-w-40 border-b border-line px-3 py-2">Requiredness</th>
-                <th className="min-w-72 border-b border-line px-3 py-2">Notes</th>
-                <th className="min-w-32 border-b border-line px-3 py-2">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, rowIndex) => (
-                <tr key={row.id} className={rowIndex % 2 === 0 ? "bg-white" : "bg-mist/60"}>
-                  <td className="sticky left-0 z-[1] border-b border-line bg-inherit px-3 py-3 align-top font-semibold text-ink">
-                    {row.eventName}
-                  </td>
-                  <td className="border-b border-line px-3 py-3 align-top">{row.category}</td>
-                  <td className="border-b border-line px-3 py-3 align-top">{row.featurePack}</td>
-                  <td className="border-b border-line px-3 py-3 align-top text-slate-700">{row.trigger}</td>
-                  <td className="border-b border-line px-3 py-3 align-top">{row.argumentName}</td>
-                  <td className="border-b border-line px-3 py-3 align-top text-slate-700">{row.argumentDescription}</td>
-                  <td className="border-b border-line px-3 py-3 align-top text-slate-700">{row.argumentExamples}</td>
-                  <td className="border-b border-line px-3 py-3 align-top font-semibold">{row.payloadName}</td>
-                  <td className="border-b border-line px-3 py-3 align-top text-slate-700">{row.payloadDescription}</td>
-                  <td className="border-b border-line px-3 py-3 align-top font-mono text-xs text-slate-700">{row.payloadExample}</td>
-                  <td className="border-b border-line px-3 py-3 align-top">{row.payloadType}</td>
-                  <td className="border-b border-line px-3 py-3 align-top">{row.requiredness}</td>
-                  <td className="border-b border-line px-3 py-3 align-top text-slate-700">{row.notes}</td>
-                  <td className="border-b border-line px-3 py-3 align-top">
-                    <span className="rounded bg-white px-2 py-1 text-xs font-semibold text-slate-600 shadow-sm">
-                      {row.status}
-                    </span>
-                  </td>
-                </tr>
+        {activeGroup ? (
+          <div className="border-t border-line bg-mist/50 px-4 py-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-500">Current Group</div>
+                <h3 className="mt-1 text-lg font-bold text-ink">{activeGroup.label}</h3>
+                <p className="text-sm text-slate-600">{activeGroup.description}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:min-w-72">
+                <div className="rounded-md border border-line bg-white px-3 py-2">
+                  <div className="text-xs font-semibold uppercase text-slate-500">Events</div>
+                  <div className="mt-1 text-lg font-bold text-ink">
+                    {activeGroup.events.length + platformEventCount(activeGroup.platformAdPayloads)}
+                  </div>
+                </div>
+                <div className="rounded-md border border-line bg-white px-3 py-2">
+                  <div className="text-xs font-semibold uppercase text-slate-500">Payloads</div>
+                  <div className="mt-1 text-lg font-bold text-ink">
+                    {payloadCountForEvents(activeGroup.events) + activeGroup.platformAdPayloads.length}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3 rounded-md border border-line bg-white px-3 py-2 shadow-sm">
+              <Search className="h-4 w-4 text-slate-500" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={`Search ${activeGroup.label.toLowerCase()} specs...`}
+                className="focus-ring w-full border-0 bg-transparent text-sm outline-none"
+              />
+            </div>
+
+            <div className="mt-4 space-y-4">
+              {filteredGroupEvents.map((event) => (
+                <EventSpecCard key={event.eventName} event={event} />
               ))}
-              {!rows.length ? (
-                <tr>
-                  <td colSpan={14} className="px-3 py-10 text-center text-sm text-slate-500">
-                    No rows match the current search.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
-      {activeSpec.platformAdPayloads.length ? (
-        <div className="rounded-md border border-line bg-white shadow-sm">
-          <div className="border-b border-line px-4 py-3">
-            <h3 className="font-bold text-ink">Platform Ad Payload Enrichment</h3>
-            <p className="text-sm text-slate-600">Additional payloads required on platform-triggered ad events.</p>
+              {filteredPlatformAdPayloadGroups.map((platformEvent) => (
+                <PlatformAdEventCard
+                  key={platformEvent.eventName}
+                  eventName={platformEvent.eventName}
+                  adFamily={platformEvent.adFamily}
+                  payloads={platformEvent.payloads}
+                />
+              ))}
+
+              {!filteredGroupEvents.length && !filteredPlatformAdPayloadGroups.length ? (
+                <div className="rounded-md border border-dashed border-line bg-white px-4 py-10 text-center text-sm text-slate-500">
+                  No specs match the current search in {activeGroup.label}.
+                </div>
+              ) : null}
+            </div>
           </div>
-          <div className="max-h-[360px] overflow-auto">
-            <table className="w-full min-w-[1080px] text-left text-sm">
-              <thead className="sticky top-0 bg-sage text-xs uppercase text-slate-600">
-                <tr>
-                  <th className="px-3 py-2">Platform Event</th>
-                  <th className="px-3 py-2">Ad Family</th>
-                  <th className="px-3 py-2">Payload</th>
-                  <th className="px-3 py-2">Description</th>
-                  <th className="px-3 py-2">Example</th>
-                  <th className="px-3 py-2">Requiredness</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {activeSpec.platformAdPayloads.map((payload, index) => (
-                  <tr key={`${payload.platformEventName}-${payload.canonicalPayloadName}-${index}`}>
-                    <td className="px-3 py-3 font-semibold">{payload.platformEventName}</td>
-                    <td className="px-3 py-3">{payload.adFamily}</td>
-                    <td className="px-3 py-3 font-semibold">{payload.canonicalPayloadName}</td>
-                    <td className="px-3 py-3 text-slate-700">{payload.description}</td>
-                    <td className="px-3 py-3 font-mono text-xs text-slate-700">{payload.example}</td>
-                    <td className="px-3 py-3">{payload.requiredness}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        ) : (
+          <div className="border-t border-line px-4 py-10 text-center text-sm text-slate-500">
+            No grouped specs are available for this game.
           </div>
-        </div>
-      ) : null}
+        )}
+      </div>
     </section>
   );
 }

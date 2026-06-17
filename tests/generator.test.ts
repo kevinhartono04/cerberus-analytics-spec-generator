@@ -120,6 +120,53 @@ describe("analytics generator", () => {
     expect(gameEndPayloads).not.toContain("time_per_match");
   });
 
+  it("does not include game-specific illegal region or worm target Game_End payloads", () => {
+    const snapshot = getLibrarySnapshot();
+    const spec = generateSpecFromRules(
+      baseIntake,
+      {
+        ...snapshot,
+        payloads: [
+          ...snapshot.payloads,
+          {
+            eventName: "Game_End",
+            featurePack: "Core Gameplay Round",
+            category: "Core",
+            fieldName: "illegal_regions",
+            canonicalFieldName: "illegal_regions",
+            fieldDescription: "Game-specific illegal region count.",
+            example: "2",
+            dataType: "Integer",
+            requiredness: "Optional",
+            note: "",
+            sourceLabel: "Test",
+            sourceGame: "Test",
+          },
+          {
+            eventName: "Game_End",
+            featurePack: "Core Gameplay Round",
+            category: "Core",
+            fieldName: "worms_target",
+            canonicalFieldName: "worms_target",
+            fieldDescription: "Game-specific worm target count.",
+            example: "5",
+            dataType: "Integer",
+            requiredness: "Optional",
+            note: "",
+            sourceLabel: "Test",
+            sourceGame: "Test",
+          },
+        ],
+      },
+    );
+    const gameEndPayloads = spec.generatedEvents
+      .find((event) => event.eventName === "Game_End")
+      ?.payloadFields.map((payload) => payload.canonicalFieldName);
+
+    expect(gameEndPayloads).not.toContain("illegal_regions");
+    expect(gameEndPayloads).not.toContain("worms_target");
+  });
+
   it("maps Limited time only to time_limit and Match objectives to time_per_match", () => {
     const timedSpec = generateSpecFromRules({ ...baseIntake, mechanics: "Limited time" }, getLibrarySnapshot());
     const timedPayloads = timedSpec.generatedEvents
