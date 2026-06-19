@@ -39,6 +39,13 @@ test("generates, edits, saves, reopens, and deletes a draft spec", async ({ page
   await firstPayloadExample.fill("edited_payload_example");
   await expect(firstPayloadExample).toHaveValue("edited_payload_example");
 
+  const firstPayloadName = page.getByLabel(/payload name 1/).first();
+  await firstPayloadName.fill("");
+  await firstPayloadName.click();
+  await page.keyboard.type("review_payload");
+  await expect(firstPayloadName).toBeFocused();
+  await expect(firstPayloadName).toHaveValue("review_payload");
+
   await page.getByPlaceholder("Filter ad payloads...").fill("Rewarded placement");
   await expect(page.getByText("Applies to all rewarded platform ad events.")).toBeVisible();
   await page.getByTestId("ad-payload-description").fill("Unified rewarded placement description.");

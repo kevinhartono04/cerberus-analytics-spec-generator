@@ -470,7 +470,7 @@ function PayloadDetailsEditor({
   return (
     <div className="space-y-3">
       {payloadFields.map((payload, payloadIndex) => (
-        <div key={`${payload.canonicalFieldName}-${payloadIndex}`} className="rounded-md border border-line bg-mist p-3">
+        <div key={`payload-${payloadIndex}`} className="rounded-md border border-line bg-mist p-3">
           <div className="grid gap-3 lg:grid-cols-[180px_1fr_180px_auto]">
             <label className="block">
               <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Payload</span>
