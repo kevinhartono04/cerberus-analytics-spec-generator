@@ -21,6 +21,15 @@ let cachedSnapshot: LibrarySnapshot | null = null;
 let sqlClient: postgres.Sql | null = null;
 let savedSpecsTableReady: Promise<void> | null = null;
 
+function getDatabaseUrl() {
+  return (
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL_NON_POOLING
+  );
+}
+
 function asString(value: unknown) {
   return value == null ? "" : String(value);
 }
@@ -38,12 +47,16 @@ function getSection(section: string) {
 }
 
 function getSql() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL is required for saved spec storage. Connect a Postgres database in Vercel.");
+  const databaseUrl = getDatabaseUrl();
+
+  if (!databaseUrl) {
+    throw new Error(
+      "A Postgres connection string is required for saved spec storage. Set DATABASE_URL, POSTGRES_URL, POSTGRES_PRISMA_URL, or POSTGRES_URL_NON_POOLING in Vercel.",
+    );
   }
 
   if (!sqlClient) {
-    sqlClient = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
+    sqlClient = postgres(databaseUrl, { max: 1, prepare: false });
   }
 
   return sqlClient;
