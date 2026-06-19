@@ -1,7 +1,22 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { BookOpen, FileText, Library, Play, Plus, Save, Search, Sparkles, Table2, Trash2, Wand2 } from "lucide-react";
+import {
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Library,
+  Play,
+  Plus,
+  Save,
+  Search,
+  Sparkles,
+  Table2,
+  Trash2,
+  Wand2,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { UseFormReturn, useForm } from "react-hook-form";
 
@@ -17,6 +32,14 @@ import {
 } from "@/lib/types";
 
 type Tab = "intake" | "review" | "viewer" | "specs" | "library";
+
+const navigationItems: Array<{ tab: Tab; label: string; icon: LucideIcon }> = [
+  { tab: "intake", label: "Intake", icon: Wand2 },
+  { tab: "review", label: "Review", icon: Sparkles },
+  { tab: "viewer", label: "Spec Viewer", icon: Table2 },
+  { tab: "specs", label: "Saved Specs", icon: FileText },
+  { tab: "library", label: "Library", icon: Library },
+];
 
 const exampleIntake: GameIntake = {
   gameTitle: "Sample Match Timed",
@@ -151,6 +174,7 @@ function CheckboxDropdown({
   const value = form.watch(name) ?? "";
   const selected = splitTextList(value);
   const selectedSet = new Set(selected);
+  const tone = categoryTone(label);
 
   function toggle(option: string) {
     const next = selectedSet.has(option)
@@ -160,15 +184,15 @@ function CheckboxDropdown({
   }
 
   return (
-    <details className="rounded-md border border-line bg-white shadow-sm open:shadow-md">
+    <details className={`rounded-md border border-line border-l-2 bg-white shadow-sm open:shadow-md ${tone.border}`}>
       <summary className="focus-ring flex cursor-pointer list-none items-center justify-between gap-3 rounded-md px-4 py-3">
         <span>
-          <span className="block text-sm font-semibold text-ink">{label}</span>
+          <span className={`block text-sm font-semibold ${tone.text}`}>{label}</span>
           <span className="mt-1 block text-xs text-slate-500">
             {selected.length ? `${selected.length} selected` : helper}
           </span>
         </span>
-        <span className="rounded bg-mist px-2 py-1 text-xs font-semibold text-slate-600">Choose</span>
+        <ToneChip tone={tone}>Choose</ToneChip>
       </summary>
       <div className="border-t border-line p-4">
         <div className="grid gap-2 sm:grid-cols-2">
@@ -204,11 +228,142 @@ function CheckboxDropdown({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string | number }) {
+function statusTone(status: string) {
+  const lower = status.toLowerCase();
+  if (lower.includes("review") || lower.includes("approved") || lower.includes("final")) {
+    return {
+      chip: "border-emerald/30 bg-emerald/10 text-emerald",
+      metric: "text-emerald",
+      bar: "bg-emerald",
+    };
+  }
+  if (lower.includes("change") || lower.includes("error") || lower.includes("fail")) {
+    return {
+      chip: "border-rose/30 bg-rose/10 text-rose",
+      metric: "text-rose",
+      bar: "bg-rose",
+    };
+  }
+  if (lower.includes("draft")) {
+    return {
+      chip: "border-amber/30 bg-amber/10 text-amber",
+      metric: "text-amber",
+      bar: "bg-amber",
+    };
+  }
+  return {
+    chip: "border-line bg-sage text-slate-500",
+    metric: "text-ink",
+    bar: "bg-line",
+  };
+}
+
+function categoryTone(value: string) {
+  const lower = value.toLowerCase();
+  if (lower.includes("economy") || lower.includes("currency") || lower.includes("transaction")) {
+    return {
+      text: "text-emerald",
+      border: "border-l-emerald",
+      chip: "border-emerald/30 bg-emerald/10 text-emerald",
+      table: "bg-emerald/10 text-emerald",
+      bar: "bg-emerald",
+    };
+  }
+  if (lower.includes("iap") || lower.includes("store") || lower.includes("purchase")) {
+    return {
+      text: "text-amber",
+      border: "border-l-amber",
+      chip: "border-amber/30 bg-amber/10 text-amber",
+      table: "bg-amber/10 text-amber",
+      bar: "bg-amber",
+    };
+  }
+  if (lower.includes("ad") || lower.includes("iaa") || lower.includes("rewarded") || lower.includes("interstitial")) {
+    return {
+      text: "text-cyan",
+      border: "border-l-cyan",
+      chip: "border-cyan/30 bg-cyan/10 text-cyan",
+      table: "bg-cyan/10 text-cyan",
+      bar: "bg-cyan",
+    };
+  }
+  if (lower.includes("live") || lower.includes("event") || lower.includes("mission")) {
+    return {
+      text: "text-violet",
+      border: "border-l-violet",
+      chip: "border-violet/30 bg-violet/10 text-violet",
+      table: "bg-violet/10 text-violet",
+      bar: "bg-violet",
+    };
+  }
+  if (lower.includes("game") || lower.includes("play") || lower.includes("core")) {
+    return {
+      text: "text-cobalt",
+      border: "border-l-cobalt",
+      chip: "border-cobalt/30 bg-cobalt/10 text-cobalt",
+      table: "bg-cobalt/10 text-cobalt",
+      bar: "bg-cobalt",
+    };
+  }
+  return {
+    text: "text-slate-500",
+    border: "border-l-line",
+    chip: "border-line bg-sage text-slate-500",
+    table: "bg-sage text-slate-500",
+    bar: "bg-line",
+  };
+}
+
+function metricTone(label: string, value: string | number) {
+  const lowerLabel = label.toLowerCase();
+  if (lowerLabel.includes("status")) return statusTone(String(value));
+  if (lowerLabel.includes("event")) return { metric: "text-cobalt", bar: "bg-cobalt" };
+  if (lowerLabel.includes("payload")) return { metric: "text-emerald", bar: "bg-emerald" };
+  if (lowerLabel.includes("pack")) return { metric: "text-violet", bar: "bg-violet" };
+  if (lowerLabel.includes("updated")) return { metric: "text-amber", bar: "bg-amber" };
+  return { metric: "text-ink", bar: "bg-line" };
+}
+
+function StatusChip({ status }: { status: string }) {
   return (
-    <div className="rounded-md border border-line bg-white p-4 shadow-sm">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-2 text-2xl font-bold text-ink">{value}</div>
+    <span className={`status-chip w-fit rounded border px-2 py-1 text-[11px] font-semibold ${statusTone(status).chip}`}>
+      {status}
+    </span>
+  );
+}
+
+function ToneChip({ children, tone }: { children: React.ReactNode; tone: ReturnType<typeof categoryTone> }) {
+  return (
+    <span className={`tone-chip w-fit rounded border px-2 py-1 text-[11px] font-semibold uppercase ${tone.chip}`}>
+      {children}
+    </span>
+  );
+}
+
+function DataTypePill({ type }: { type: string }) {
+  const lower = type.toLowerCase();
+  const tone = lower.includes("int") || lower.includes("number") || lower.includes("float")
+    ? "border-amber/30 bg-amber/10 text-amber"
+    : lower.includes("bool")
+      ? "border-violet/30 bg-violet/10 text-violet"
+      : lower.includes("id")
+        ? "border-cyan/30 bg-cyan/10 text-cyan"
+        : "border-cobalt/30 bg-cobalt/10 text-cobalt";
+
+  return (
+    <span className={`tone-chip inline-flex w-fit items-center rounded-full border px-2.5 py-1 font-mono text-[11px] font-semibold ${tone}`}>
+      {type || "-"}
+    </span>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string | number }) {
+  const tone = metricTone(label, value);
+  return (
+    <div className="relative overflow-hidden rounded-md border border-line bg-white p-4 shadow-sm">
+      <div className={`absolute inset-x-0 top-0 h-0.5 ${tone.bar}`} />
+      <div className="font-mono text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+      <div className={`metric-value mt-2 text-3xl font-bold leading-none ${tone.metric}`}>{value}</div>
     </div>
   );
 }
@@ -328,7 +483,7 @@ function PayloadDetailsEditor({
                     canonicalFieldName: event.target.value,
                   })
                 }
-                className="focus-ring h-9 w-full rounded-md border border-line bg-white px-2 text-sm font-semibold"
+                className="focus-ring h-9 w-full rounded-md border border-line bg-white px-2 font-mono text-sm font-semibold text-cobalt"
               />
             </label>
             <label className="block">
@@ -346,13 +501,13 @@ function PayloadDetailsEditor({
                 aria-label={`${eventName} ${payload.canonicalFieldName} example`}
                 value={payload.example}
                 onChange={(event) => onChange(payloadIndex, { example: event.target.value })}
-                className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-2 py-1 text-sm"
+                className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-2 py-1 font-mono text-sm text-emerald"
               />
             </label>
             <button
               type="button"
               onClick={() => onDelete(payloadIndex)}
-              className="focus-ring mt-5 inline-flex h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-semibold hover:bg-red-50"
+              className="focus-ring mt-5 inline-flex h-9 items-center justify-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-2 text-xs font-semibold text-rose hover:bg-rose/20"
             >
               <Trash2 className="h-3.5 w-3.5" />
               Remove
@@ -372,26 +527,37 @@ function PayloadDetailsEditor({
   );
 }
 
-function TabButton({
-  tab,
+function SidebarNavButton({
+  item,
   activeTab,
   setActiveTab,
-  children,
+  collapsed,
 }: {
-  tab: Tab;
+  item: (typeof navigationItems)[number];
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
-  children: React.ReactNode;
+  collapsed: boolean;
 }) {
+  const Icon = item.icon;
+  const isActive = activeTab === item.tab;
+
   return (
     <button
       type="button"
-      onClick={() => setActiveTab(tab)}
-      className={`focus-ring rounded-md px-4 py-2 text-sm font-semibold ${
-        activeTab === tab ? "bg-cobalt text-white" : "bg-white text-ink hover:bg-slate-50"
+      title={collapsed ? item.label : undefined}
+      aria-label={item.label}
+      aria-current={isActive ? "page" : undefined}
+      onClick={() => setActiveTab(item.tab)}
+      className={`focus-ring group flex h-11 w-full items-center gap-3 rounded-md border px-3 text-sm font-semibold transition-colors ${
+        collapsed ? "justify-center" : "justify-start max-md:justify-center"
+      } ${
+        isActive
+          ? "border-cobalt bg-cobalt text-white"
+          : "border-transparent bg-transparent text-slate-500 hover:border-line hover:bg-sage hover:text-ink"
       }`}
     >
-      {children}
+      <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-white" : "text-slate-500 group-hover:text-ink"}`} />
+      {collapsed ? null : <span className="truncate max-md:hidden">{item.label}</span>}
     </button>
   );
 }
@@ -675,26 +841,25 @@ function SpecReview({
               {filteredEventIndexes.map((eventIndex) => {
                 const eventRow = spec.generatedEvents[eventIndex];
                 const isSelected = eventIndex === selectedEventIndex;
+                const tone = categoryTone(`${eventRow.category} ${eventRow.featurePack} ${eventRow.eventName}`);
                 return (
                   <button
                     key={`${eventRow.eventName}-${eventIndex}`}
                     type="button"
                     onClick={() => setSelectedEventIndex(eventIndex)}
-                    className={`focus-ring block w-full px-3 py-3 text-left text-sm ${
-                      isSelected ? "bg-white shadow-sm" : "hover:bg-white/70"
+                    className={`focus-ring block w-full border-l-2 px-3 py-3 text-left text-sm ${tone.border} ${
+                      isSelected ? "bg-sage shadow-sm" : "hover:bg-sage"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="truncate font-semibold text-ink">{eventRow.eventName}</div>
+                        <div className={`truncate font-mono text-sm font-semibold ${tone.text}`}>{eventRow.eventName}</div>
                         <div className="mt-1 truncate text-xs text-slate-600">{eventRow.featurePack}</div>
                       </div>
-                      <span className="shrink-0 rounded bg-white px-2 py-1 text-[11px] font-semibold text-slate-600">
-                        {eventRow.status}
-                      </span>
+                      <StatusChip status={eventRow.status} />
                     </div>
                     <div className="mt-2 line-clamp-2 text-xs text-slate-500">{eventRow.trigger}</div>
-                    <div className="mt-2 text-[11px] font-semibold uppercase text-slate-500">
+                    <div className="mt-2 font-mono text-[11px] font-semibold uppercase text-slate-500">
                       {eventRow.payloadFields.length} payloads
                     </div>
                   </button>
@@ -706,19 +871,26 @@ function SpecReview({
             </div>
           </div>
 
-          <div className="rounded-md border border-line bg-white p-4">
+            <div className="rounded-md border border-line bg-white p-4">
             {selectedEvent ? (
               <div className="space-y-5">
                 <div className="flex flex-col justify-between gap-3 border-b border-line pb-4 md:flex-row md:items-start">
                   <div>
                     <div className="text-xs font-semibold uppercase text-slate-500">Event Details</div>
-                    <h3 className="mt-1 text-lg font-bold text-ink">{selectedEvent.eventName}</h3>
-                    <p className="text-sm text-slate-600">{selectedEvent.featurePack}</p>
+                    <h3 className={`mt-1 font-mono text-lg font-bold ${categoryTone(`${selectedEvent.category} ${selectedEvent.featurePack} ${selectedEvent.eventName}`).text}`}>
+                      {selectedEvent.eventName}
+                    </h3>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <ToneChip tone={categoryTone(`${selectedEvent.category} ${selectedEvent.featurePack} ${selectedEvent.eventName}`)}>
+                        {selectedEvent.category}
+                      </ToneChip>
+                      <span className="text-sm text-slate-600">{selectedEvent.featurePack}</span>
+                    </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => deleteEvent(selectedEventIndex)}
-                    className="focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold hover:bg-red-50"
+                    className="focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-rose/40 bg-rose/10 px-3 py-2 text-sm font-semibold text-rose hover:bg-rose/20"
                   >
                     <Trash2 className="h-4 w-4" />
                     Delete Event
@@ -814,23 +986,22 @@ function SpecReview({
               <div className="divide-y divide-line">
                 {filteredAdPayloadGroups.map((group) => {
                   const isSelected = group.key === selectedAdPayloadGroup?.key;
+                  const tone = categoryTone(`${group.adFamily} ad payload`);
                   return (
                     <button
                       key={group.key}
                       type="button"
                       onClick={() => setSelectedAdPayloadGroupKey(group.key)}
-                      className={`focus-ring block w-full px-3 py-3 text-left text-sm ${
-                        isSelected ? "bg-white shadow-sm" : "hover:bg-white/70"
+                      className={`focus-ring block w-full border-l-2 px-3 py-3 text-left text-sm ${tone.border} ${
+                        isSelected ? "bg-sage shadow-sm" : "hover:bg-sage"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="truncate font-semibold text-ink">{group.canonicalPayloadName}</div>
+                          <div className={`truncate font-mono text-sm font-semibold ${tone.text}`}>{group.canonicalPayloadName}</div>
                           <div className="mt-1 truncate text-xs text-slate-600">{group.adFamily} Ads</div>
                         </div>
-                        <span className="shrink-0 rounded bg-white px-2 py-1 text-[11px] font-semibold text-slate-600">
-                          {group.platformEventNames.length} events
-                        </span>
+                        <ToneChip tone={tone}>{group.platformEventNames.length} events</ToneChip>
                       </div>
                       <div className="mt-2 line-clamp-2 text-xs text-slate-500">{group.description}</div>
                       <div className="mt-2 truncate font-mono text-xs text-slate-700">{group.example}</div>
@@ -849,14 +1020,16 @@ function SpecReview({
                   <div className="flex flex-col justify-between gap-3 border-b border-line pb-4 md:flex-row md:items-start">
                     <div>
                       <div className="text-xs font-semibold uppercase text-slate-500">Ad Payload Definition</div>
-                      <h4 className="mt-1 text-lg font-bold text-ink">{selectedAdPayloadGroup.canonicalPayloadName}</h4>
+                      <h4 className={`mt-1 font-mono text-lg font-bold ${categoryTone(`${selectedAdPayloadGroup.adFamily} ad payload`).text}`}>
+                        {selectedAdPayloadGroup.canonicalPayloadName}
+                      </h4>
                       <p className="text-sm text-slate-600">
                         Applies to all {selectedAdPayloadGroup.adFamily.toLowerCase()} platform ad events.
                       </p>
                     </div>
-                    <span className="w-fit rounded bg-sage px-2 py-1 text-xs font-semibold uppercase text-slate-600">
+                    <ToneChip tone={categoryTone(`${selectedAdPayloadGroup.adFamily} ad payload`)}>
                       {selectedAdPayloadGroup.requiredness}
-                    </span>
+                    </ToneChip>
                   </div>
 
                   <div className="grid gap-3 md:grid-cols-[180px_1fr]">
@@ -991,7 +1164,7 @@ function SavedSpecsBrowser({
                 </td>
                 <td className="px-3 py-3">{savedSpec.genre || "Unspecified"}</td>
                 <td className="px-3 py-3">
-                  <span className="rounded bg-mist px-2 py-1 text-xs font-semibold">{savedSpec.status}</span>
+                  <StatusChip status={savedSpec.status} />
                 </td>
                 <td className="px-3 py-3">{savedSpec.eventCount}</td>
                 <td className="px-3 py-3">{savedSpec.payloadCount}</td>
@@ -1011,7 +1184,7 @@ function SavedSpecsBrowser({
                       onClick={() => {
                         if (window.confirm(`Delete ${savedSpec.gameTitle}?`)) void onDelete(savedSpec.id);
                       }}
-                      className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-white px-3 py-2 text-xs font-semibold hover:bg-red-50"
+                      className="focus-ring inline-flex items-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-3 py-2 text-xs font-semibold text-rose hover:bg-rose/20"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                       Delete
@@ -1222,15 +1395,16 @@ function rowsForSpec(spec: GeneratedSpec): SpecViewerRow[] {
 }
 
 function EventSpecCard({ event }: { event: GeneratedEvent }) {
+  const tone = categoryTone(`${event.category} ${event.featurePack} ${event.eventName}`);
   return (
-    <article className="rounded-md border border-line bg-white shadow-sm">
+    <article className={`rounded-md border border-line border-l-2 bg-white shadow-sm ${tone.border}`}>
       <div className="border-b border-line px-4 py-3">
         <div className="flex flex-col justify-between gap-2 md:flex-row md:items-start">
           <div>
-            <h4 className="text-base font-bold text-ink">{event.eventName}</h4>
+            <h4 className={`font-mono text-base font-bold ${tone.text}`}>{event.eventName}</h4>
             <p className="text-sm text-slate-600">{event.featurePack}</p>
           </div>
-          <span className="w-fit rounded bg-mist px-2 py-1 text-xs font-semibold text-slate-600">{event.status}</span>
+          <StatusChip status={event.status} />
         </div>
         <p className="mt-3 text-sm text-slate-700">{event.trigger || "No trigger description yet."}</p>
       </div>
@@ -1239,7 +1413,7 @@ function EventSpecCard({ event }: { event: GeneratedEvent }) {
         <div className="grid gap-3 border-b border-line bg-mist/50 px-4 py-3 md:grid-cols-3">
           <div>
             <div className="text-xs font-semibold uppercase text-slate-500">Argument</div>
-            <div className="mt-1 text-sm font-semibold text-ink">{event.argumentName || "-"}</div>
+            <div className={`mt-1 font-mono text-sm font-semibold ${tone.text}`}>{event.argumentName || "-"}</div>
           </div>
           <div>
             <div className="text-xs font-semibold uppercase text-slate-500">Description</div>
@@ -1253,29 +1427,27 @@ function EventSpecCard({ event }: { event: GeneratedEvent }) {
       ) : null}
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[880px] text-left text-sm">
-          <thead className="bg-sage text-xs uppercase text-slate-600">
+        <table className="w-full min-w-[880px] text-left text-[15px]">
+          <thead className={`text-xs uppercase ${tone.table}`}>
             <tr>
               <th className="px-3 py-2">Payload</th>
               <th className="px-3 py-2">Description</th>
               <th className="px-3 py-2">Example</th>
               <th className="px-3 py-2">Type</th>
-              <th className="px-3 py-2">Requiredness</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
             {event.payloadFields.map((payload, payloadIndex) => (
               <tr key={`${event.eventName}-${payload.canonicalFieldName}-${payloadIndex}`}>
-                <td className="px-3 py-3 align-top font-semibold text-ink">{payload.canonicalFieldName}</td>
+                <td className={`px-3 py-3 align-top font-mono font-semibold ${tone.text}`}>{payload.canonicalFieldName}</td>
                 <td className="px-3 py-3 align-top text-slate-700">{payload.description}</td>
-                <td className="px-3 py-3 align-top font-mono text-xs text-slate-700">{payload.example}</td>
-                <td className="px-3 py-3 align-top">{payload.type}</td>
-                <td className="px-3 py-3 align-top">{payload.requiredness}</td>
+                <td className="px-3 py-3 align-top font-mono text-sm text-emerald">{payload.example}</td>
+                <td className="px-3 py-3 align-top"><DataTypePill type={payload.type} /></td>
               </tr>
             ))}
             {!event.payloadFields.length ? (
               <tr>
-                <td colSpan={5} className="px-3 py-6 text-center text-sm text-slate-500">
+                <td colSpan={4} className="px-3 py-6 text-center text-sm text-slate-500">
                   No payloads specified for this event.
                 </td>
               </tr>
@@ -1296,35 +1468,32 @@ function PlatformAdEventCard({
   adFamily: string;
   payloads: PlatformAdPayloadRow[];
 }) {
+  const tone = categoryTone(`${adFamily} ad event`);
   return (
-    <article className="rounded-md border border-line bg-white shadow-sm">
+    <article className={`rounded-md border border-line border-l-2 bg-white shadow-sm ${tone.border}`}>
       <div className="flex flex-col justify-between gap-2 border-b border-line px-4 py-3 md:flex-row md:items-start">
         <div>
-          <h4 className="text-base font-bold text-ink">{eventName}</h4>
+          <h4 className={`font-mono text-base font-bold ${tone.text}`}>{eventName}</h4>
           <p className="text-sm text-slate-600">{adFamily} platform ad event</p>
         </div>
-        <span className="w-fit rounded bg-mist px-2 py-1 text-xs font-semibold text-slate-600">
-          {payloads.length} payloads
-        </span>
+        <ToneChip tone={tone}>{payloads.length} payloads</ToneChip>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-left text-sm">
-          <thead className="bg-sage text-xs uppercase text-slate-600">
+        <table className="w-full min-w-[760px] text-left text-[15px]">
+          <thead className={`text-xs uppercase ${tone.table}`}>
             <tr>
               <th className="px-3 py-2">Payload</th>
               <th className="px-3 py-2">Description</th>
               <th className="px-3 py-2">Example</th>
-              <th className="px-3 py-2">Requiredness</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
             {payloads.map((payload, payloadIndex) => (
               <tr key={`${payload.platformEventName}-${payload.canonicalPayloadName}-${payloadIndex}`}>
-                <td className="px-3 py-3 align-top font-semibold text-ink">{payload.canonicalPayloadName}</td>
+                <td className={`px-3 py-3 align-top font-mono font-semibold ${tone.text}`}>{payload.canonicalPayloadName}</td>
                 <td className="px-3 py-3 align-top text-slate-700">{payload.description}</td>
-                <td className="px-3 py-3 align-top font-mono text-xs text-slate-700">{payload.example}</td>
-                <td className="px-3 py-3 align-top">{payload.requiredness}</td>
+                <td className="px-3 py-3 align-top font-mono text-sm text-emerald">{payload.example}</td>
               </tr>
             ))}
           </tbody>
@@ -1438,7 +1607,7 @@ function SpecViewer({
                 onClick={() => setActiveSpecId(savedSpec.id)}
                 className={`focus-ring shrink-0 rounded-t-md border border-b-0 px-4 py-2 text-sm font-semibold ${
                   activeSpec.id === savedSpec.id
-                    ? "border-line bg-white text-ink"
+                    ? "border-line bg-sage text-ink"
                     : "border-transparent bg-transparent text-slate-600 hover:bg-white/70"
                 }`}
               >
@@ -1461,6 +1630,7 @@ function SpecViewer({
               const eventCount = group.events.length + platformEventCount(group.platformAdPayloads);
               const payloadCount = payloadCountForEvents(group.events) + group.platformAdPayloads.length;
               const isActive = group.id === activeGroup?.id;
+              const tone = categoryTone(group.label);
               return (
                 <button
                   key={group.id}
@@ -1472,10 +1642,11 @@ function SpecViewer({
                     setQuery("");
                   }}
                   className={`focus-ring shrink-0 rounded-md border px-4 py-3 text-left text-sm ${
-                    isActive ? "border-cobalt bg-cobalt text-white shadow-sm" : "border-line bg-white text-slate-700 hover:bg-mist"
+                    isActive ? `border-cobalt bg-cobalt text-white shadow-sm` : `border-line bg-white text-slate-700 hover:bg-mist`
                   }`}
                 >
-                  <div className="font-bold">{group.label}</div>
+                  <div className={`mb-2 h-0.5 w-8 rounded ${isActive ? "bg-white/80" : tone.bar}`} />
+                  <div className={`font-mono text-sm font-bold ${isActive ? "text-white" : tone.text}`}>{group.label}</div>
                   <div className={`mt-1 text-xs ${isActive ? "text-white/80" : "text-slate-500"}`}>
                     {eventCount} events · {payloadCount} payloads
                   </div>
@@ -1490,7 +1661,7 @@ function SpecViewer({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <div className="text-xs font-semibold uppercase text-slate-500">Current Group</div>
-                <h3 className="mt-1 text-lg font-bold text-ink">{activeGroup.label}</h3>
+                <h3 className={`mt-1 text-lg font-bold ${categoryTone(activeGroup.label).text}`}>{activeGroup.label}</h3>
                 <p className="text-sm text-slate-600">{activeGroup.description}</p>
               </div>
               <div className="grid grid-cols-2 gap-2 sm:min-w-72">
@@ -1552,6 +1723,7 @@ function SpecViewer({
 
 export default function MvpApp({ library }: { library: LibrarySnapshot }) {
   const [activeTab, setActiveTab] = useState<Tab>("intake");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [spec, setSpec] = useState<GeneratedSpec | null>(null);
   const [savedSpecs, setSavedSpecs] = useState<SavedSpecSummary[]>([]);
   const [viewerSpecs, setViewerSpecs] = useState<GeneratedSpec[]>([]);
@@ -1708,40 +1880,60 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
   }
 
   return (
-    <main className="min-h-screen bg-mist">
-      <header className="border-b border-line bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-5 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-cobalt">
+    <main className="theme-dark min-h-screen bg-mist">
+      <div className="flex min-h-screen">
+        <aside
+          className={`sticky top-0 flex h-screen shrink-0 flex-col border-r border-line bg-white/95 transition-[width] duration-200 ${
+            sidebarCollapsed ? "w-20" : "w-20 md:w-72"
+          }`}
+        >
+          <div className={`border-b border-line px-4 py-5 ${sidebarCollapsed ? "text-center" : ""}`}>
+            <div
+              className={`flex items-center gap-2 font-mono text-xs font-semibold uppercase text-cobalt ${
+                sidebarCollapsed ? "justify-center" : "max-md:justify-center"
+              }`}
+            >
               <Wand2 className="h-4 w-4" />
-              Local MVP
+              {sidebarCollapsed ? null : <span className="max-md:hidden">Local MVP</span>}
             </div>
-            <h1 className="mt-1 text-2xl font-bold text-ink">Game Analytics Spec Generator</h1>
+            {sidebarCollapsed ? null : (
+              <h1 className="mt-2 text-xl font-bold leading-tight text-ink max-md:hidden">Game Analytics Spec Generator</h1>
+            )}
           </div>
-          <nav className="flex gap-2">
-            <TabButton tab="intake" activeTab={activeTab} setActiveTab={setActiveTab}>
-              Intake
-            </TabButton>
-            <TabButton tab="review" activeTab={activeTab} setActiveTab={setActiveTab}>
-              Review
-            </TabButton>
-            <TabButton tab="viewer" activeTab={activeTab} setActiveTab={setActiveTab}>
-              Spec Viewer
-            </TabButton>
-            <TabButton tab="specs" activeTab={activeTab} setActiveTab={setActiveTab}>
-              Saved Specs
-            </TabButton>
-            <TabButton tab="library" activeTab={activeTab} setActiveTab={setActiveTab}>
-              Library
-            </TabButton>
-          </nav>
-        </div>
-      </header>
 
-      <div className="mx-auto max-w-7xl px-6 py-6">
+          <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Primary navigation">
+            {navigationItems.map((item) => (
+              <SidebarNavButton
+                key={item.tab}
+                item={item}
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                collapsed={sidebarCollapsed}
+              />
+            ))}
+          </nav>
+
+          <div className="border-t border-line p-3">
+            <button
+              type="button"
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              onClick={() => setSidebarCollapsed((value) => !value)}
+              className={`focus-ring flex h-10 w-full items-center gap-2 rounded-md border border-line bg-mist px-3 text-sm font-semibold text-slate-500 hover:bg-sage hover:text-ink ${
+                sidebarCollapsed ? "justify-center" : "justify-start max-md:justify-center"
+              }`}
+            >
+              {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+              {sidebarCollapsed ? null : <span className="max-md:hidden">Collapse</span>}
+            </button>
+          </div>
+        </aside>
+
+        <section className="min-w-0 flex-1">
+          <div className="mx-auto max-w-[1440px] px-4 py-6 md:px-8">
         {activeTab === "intake" ? (
           <section className="grid gap-6 lg:grid-cols-[1fr_340px]">
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5 rounded-md border border-line bg-white p-5 shadow-soft">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5 rounded-lg border border-line bg-white p-5 shadow-soft">
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="block">
                   <span className="mb-2 block text-sm font-semibold text-ink">Game Title</span>
@@ -1828,7 +2020,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
             </form>
 
             <aside className="space-y-4">
-              <div className="rounded-md border border-line bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-line bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-2 font-bold text-ink">
                   <Library className="h-4 w-4" />
                   Library Seed
@@ -1837,7 +2029,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
                   Seeded from {library.events.length} canonical events and {library.generationPacks.length} generation packs.
                 </p>
               </div>
-              <div className="rounded-md border border-line bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-line bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-2 font-bold text-ink">
                   <BookOpen className="h-4 w-4" />
                   Intake Tips
@@ -1871,6 +2063,8 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
           <SavedSpecsBrowser savedSpecs={savedSpecs} onOpen={openSavedSpec} onDelete={deleteSpec} />
         ) : null}
         {activeTab === "library" ? <LibraryBrowser library={library} /> : null}
+          </div>
+        </section>
       </div>
     </main>
   );
