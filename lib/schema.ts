@@ -1,18 +1,6 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, pgTable, text } from "drizzle-orm/pg-core";
 
-export const libraryRecords = sqliteTable("library_records", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  section: text("section").notNull(),
-  recordKey: text("record_key").notNull(),
-  payload: text("payload").notNull(),
-});
-
-export const appMeta = sqliteTable("app_meta", {
-  key: text("key").primaryKey(),
-  value: text("value").notNull(),
-});
-
-export const savedSpecs = sqliteTable("saved_specs", {
+export const savedSpecs = pgTable("saved_specs", {
   id: text("id").primaryKey(),
   gameTitle: text("game_title").notNull(),
   genre: text("genre").notNull(),

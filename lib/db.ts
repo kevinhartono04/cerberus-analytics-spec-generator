@@ -1,10 +1,7 @@
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import { eq } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
+import postgres from "postgres";
 
-import { appMeta, libraryRecords } from "@/lib/schema";
 import type {
   GeneratedSpec,
   GenerationPack,
@@ -17,88 +14,67 @@ import type {
 } from "@/lib/types";
 import { generatedSpecSchema } from "@/lib/types";
 
-const rootDir = path.resolve(process.cwd(), "..");
-const seedPath = path.join(rootDir, "outputs", "analytics_library", "analytics_reference_library.json");
-const dataDir = path.join(process.cwd(), "data");
-const dbPath = path.join(dataDir, "analytics.sqlite");
+const seedPath = path.join(process.cwd(), "data", "analytics_reference_library.json");
 
+let cachedLibraryData: LibraryData | null = null;
 let cachedSnapshot: LibrarySnapshot | null = null;
+let sqlClient: postgres.Sql | null = null;
+let savedSpecsTableReady: Promise<void> | null = null;
 
 function asString(value: unknown) {
   return value == null ? "" : String(value);
 }
 
-function ensureDb() {
-  fs.mkdirSync(dataDir, { recursive: true });
-  const sqlite = new Database(dbPath);
-  sqlite.pragma("journal_mode = WAL");
-  const db = drizzle(sqlite);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS app_meta (
-      key TEXT PRIMARY KEY NOT NULL,
-      value TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS library_records (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      section TEXT NOT NULL,
-      record_key TEXT NOT NULL,
-      payload TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS saved_specs (
-      id TEXT PRIMARY KEY NOT NULL,
-      game_title TEXT NOT NULL,
-      genre TEXT NOT NULL,
-      status TEXT NOT NULL,
-      event_count INTEGER NOT NULL,
-      payload_count INTEGER NOT NULL,
-      generated_at TEXT NOT NULL,
-      saved_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      payload TEXT NOT NULL
-    );
-  `);
-
-  const seedStat = fs.statSync(seedPath);
-  const seedVersion = `${seedStat.mtimeMs}:${seedStat.size}`;
-  const current = db.select().from(appMeta).where(eq(appMeta.key, "seed_version")).get();
-
-  if (current?.value !== seedVersion) {
-    const raw = JSON.parse(fs.readFileSync(seedPath, "utf8")) as LibraryData;
-    sqlite.exec("DELETE FROM library_records;");
-    const insert = sqlite.prepare("INSERT INTO library_records (section, record_key, payload) VALUES (?, ?, ?)");
-    const transaction = sqlite.transaction(() => {
-      for (const [section, rows] of Object.entries(raw)) {
-        if (!Array.isArray(rows)) continue;
-        rows.forEach((row, index) => {
-          const key =
-            asString(row.event_name) ||
-            asString(row.feature_pack) ||
-            asString(row.canonical_field_name) ||
-            asString(row.platform_event_name) ||
-            `${section}-${index}`;
-          insert.run(section, key, JSON.stringify(row));
-        });
-      }
-      sqlite
-        .prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)")
-        .run("seed_version", seedVersion);
-    });
-    transaction();
-    cachedSnapshot = null;
+function getLibraryData() {
+  if (!cachedLibraryData) {
+    cachedLibraryData = JSON.parse(fs.readFileSync(seedPath, "utf8")) as LibraryData;
   }
-
-  return { db, sqlite };
+  return cachedLibraryData;
 }
 
 function getSection(section: string) {
-  const { db } = ensureDb();
-  return db
-    .select()
-    .from(libraryRecords)
-    .where(eq(libraryRecords.section, section))
-    .all()
-    .map((row) => JSON.parse(row.payload) as Record<string, unknown>);
+  const rows = getLibraryData()[section as keyof LibraryData];
+  return Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : [];
+}
+
+function getSql() {
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL is required for saved spec storage. Connect a Postgres database in Vercel.");
+  }
+
+  if (!sqlClient) {
+    sqlClient = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
+  }
+
+  return sqlClient;
+}
+
+async function ensureSavedSpecsTable() {
+  if (!savedSpecsTableReady) {
+    const sql = getSql();
+    savedSpecsTableReady = sql`
+      CREATE TABLE IF NOT EXISTS saved_specs (
+        id TEXT PRIMARY KEY NOT NULL,
+        game_title TEXT NOT NULL,
+        genre TEXT NOT NULL,
+        status TEXT NOT NULL,
+        event_count INTEGER NOT NULL,
+        payload_count INTEGER NOT NULL,
+        generated_at TEXT NOT NULL,
+        saved_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        payload TEXT NOT NULL
+      )
+    `
+      .then(() => undefined)
+      .catch((error) => {
+        savedSpecsTableReady = null;
+        throw error;
+      });
+  }
+
+  await savedSpecsTableReady;
+  return getSql();
 }
 
 export function getLibrarySnapshot(): LibrarySnapshot {
@@ -200,69 +176,69 @@ function rowToSavedSpecSummary(row: Record<string, unknown>): SavedSpecSummary {
   };
 }
 
-export function listSavedSpecs(): SavedSpecSummary[] {
-  const { sqlite } = ensureDb();
-  return sqlite
-    .prepare(
-      `
-      SELECT id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at
-      FROM saved_specs
-      ORDER BY updated_at DESC
-    `,
-    )
-    .all()
-    .map((row) => rowToSavedSpecSummary(row as Record<string, unknown>));
+export async function listSavedSpecs(): Promise<SavedSpecSummary[]> {
+  const sql = await ensureSavedSpecsTable();
+  const rows = await sql`
+    SELECT id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at
+    FROM saved_specs
+    ORDER BY updated_at DESC
+  `;
+  return rows.map((row) => rowToSavedSpecSummary(row));
 }
 
-export function getSavedSpec(id: string): GeneratedSpec | null {
-  const { sqlite } = ensureDb();
-  const row = sqlite.prepare("SELECT payload FROM saved_specs WHERE id = ?").get(id) as { payload: string } | undefined;
+export async function getSavedSpec(id: string): Promise<GeneratedSpec | null> {
+  const sql = await ensureSavedSpecsTable();
+  const [row] = await sql<{ payload: string }[]>`
+    SELECT payload
+    FROM saved_specs
+    WHERE id = ${id}
+    LIMIT 1
+  `;
   if (!row) return null;
   return generatedSpecSchema.parse(JSON.parse(row.payload));
 }
 
-export function saveSpec(specInput: unknown): SavedSpecSummary {
-  const { sqlite } = ensureDb();
+export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
+  const sql = await ensureSavedSpecsTable();
   const spec = generatedSpecSchema.parse(specInput);
-  const existing = sqlite.prepare("SELECT saved_at FROM saved_specs WHERE id = ?").get(spec.id) as
-    | { saved_at: string }
-    | undefined;
+  const [existing] = await sql<{ saved_at: string }[]>`
+    SELECT saved_at
+    FROM saved_specs
+    WHERE id = ${spec.id}
+    LIMIT 1
+  `;
   const now = new Date().toISOString();
   const savedAt = existing?.saved_at ?? now;
   const status = specStatus(spec);
   const eventCount = spec.generatedEvents.length;
   const payloadCount = specPayloadCount(spec);
 
-  sqlite
-    .prepare(
-      `
-      INSERT INTO saved_specs (
-        id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at, payload
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        game_title = excluded.game_title,
-        genre = excluded.genre,
-        status = excluded.status,
-        event_count = excluded.event_count,
-        payload_count = excluded.payload_count,
-        generated_at = excluded.generated_at,
-        updated_at = excluded.updated_at,
-        payload = excluded.payload
-    `,
+  await sql`
+    INSERT INTO saved_specs (
+      id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at, payload
     )
-    .run(
-      spec.id,
-      spec.intake.gameTitle,
-      spec.intake.genre,
-      status,
-      eventCount,
-      payloadCount,
-      spec.generatedAt,
-      savedAt,
-      now,
-      JSON.stringify(spec),
-    );
+    VALUES (
+      ${spec.id},
+      ${spec.intake.gameTitle},
+      ${spec.intake.genre},
+      ${status},
+      ${eventCount},
+      ${payloadCount},
+      ${spec.generatedAt},
+      ${savedAt},
+      ${now},
+      ${JSON.stringify(spec)}
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      game_title = excluded.game_title,
+      genre = excluded.genre,
+      status = excluded.status,
+      event_count = excluded.event_count,
+      payload_count = excluded.payload_count,
+      generated_at = excluded.generated_at,
+      updated_at = excluded.updated_at,
+      payload = excluded.payload
+  `;
 
   return {
     id: spec.id,
@@ -277,8 +253,11 @@ export function saveSpec(specInput: unknown): SavedSpecSummary {
   };
 }
 
-export function deleteSavedSpec(id: string) {
-  const { sqlite } = ensureDb();
-  const result = sqlite.prepare("DELETE FROM saved_specs WHERE id = ?").run(id);
-  return result.changes > 0;
+export async function deleteSavedSpec(id: string) {
+  const sql = await ensureSavedSpecsTable();
+  const result = await sql`
+    DELETE FROM saved_specs
+    WHERE id = ${id}
+  `;
+  return result.count > 0;
 }
