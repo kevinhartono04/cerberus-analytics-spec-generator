@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  Link2,
   Library,
   Play,
   Plus,
@@ -40,6 +41,13 @@ const navigationItems: Array<{ tab: Tab; label: string; icon: LucideIcon }> = [
   { tab: "specs", label: "Saved Specs", icon: FileText },
   { tab: "library", label: "Library", icon: Library },
 ];
+
+function tabFromParam(value: string | null): Tab | null {
+  if (value === "intake" || value === "review" || value === "viewer" || value === "specs" || value === "library") {
+    return value;
+  }
+  return null;
+}
 
 const exampleIntake: GameIntake = {
   gameTitle: "Sample Match Timed",
@@ -1510,6 +1518,8 @@ function SpecViewer({
   setActiveSpecId,
   isLoading,
   onOpenEdit,
+  onCopyShareLink,
+  shareStatus,
 }: {
   specs: GeneratedSpec[];
   savedSpecs: SavedSpecSummary[];
@@ -1517,6 +1527,8 @@ function SpecViewer({
   setActiveSpecId: (id: string) => void;
   isLoading: boolean;
   onOpenEdit: (id: string) => Promise<void>;
+  onCopyShareLink: (id: string) => Promise<void>;
+  shareStatus: string;
 }) {
   const [query, setQuery] = useState("");
   const [activeGroupId, setActiveGroupId] = useState<SpecViewerGroupId>("gameplay");
@@ -1589,6 +1601,14 @@ function SpecViewer({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
+              onClick={() => onCopyShareLink(activeSpec.id)}
+              className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold hover:bg-sage"
+            >
+              <Link2 className="h-4 w-4" />
+              Copy Link
+            </button>
+            <button
+              type="button"
               onClick={() => onOpenEdit(activeSpec.id)}
               className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
             >
@@ -1597,6 +1617,7 @@ function SpecViewer({
             </button>
           </div>
         </div>
+        {shareStatus ? <div className="border-b border-line px-4 py-2 text-xs font-semibold text-cobalt">{shareStatus}</div> : null}
 
         {savedSpecs.length > 1 ? (
           <div className="flex gap-1 overflow-x-auto border-b border-line bg-mist px-3 pt-3">
@@ -1723,6 +1744,7 @@ function SpecViewer({
 
 export default function MvpApp({ library }: { library: LibrarySnapshot }) {
   const [activeTab, setActiveTab] = useState<Tab>("intake");
+  const [hasReadUrlState, setHasReadUrlState] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [spec, setSpec] = useState<GeneratedSpec | null>(null);
   const [savedSpecs, setSavedSpecs] = useState<SavedSpecSummary[]>([]);
@@ -1732,6 +1754,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
+  const [shareStatus, setShareStatus] = useState("");
 
   const form = useForm<GameIntake>({
     resolver: zodResolver(intakeSchema),
@@ -1768,7 +1791,26 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
     setSavedSpecs((await response.json()) as SavedSpecSummary[]);
   }
 
-  async function loadViewerSpecs() {
+  function viewerShareUrl(id: string) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", "viewer");
+    url.searchParams.set("spec", id);
+    return url.toString();
+  }
+
+  async function copyViewerShareLink(id: string) {
+    if (!id) return;
+    const url = viewerShareUrl(id);
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareStatus("Share link copied");
+    } catch {
+      window.prompt("Copy this share link", url);
+      setShareStatus("Share link ready");
+    }
+  }
+
+  async function loadViewerSpecs(targetSpecId = viewerActiveSpecId) {
     setIsViewerLoading(true);
     setError("");
     try {
@@ -1784,7 +1826,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
         }),
       );
       setViewerSpecs(fullSpecs);
-      if (!fullSpecs.some((item) => item.id === viewerActiveSpecId)) {
+      if (!fullSpecs.some((item) => item.id === targetSpecId)) {
         setViewerActiveSpecId(fullSpecs[0]?.id ?? "");
       }
     } catch (err) {
@@ -1793,6 +1835,37 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
       setIsViewerLoading(false);
     }
   }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlSpecId = params.get("spec") ?? "";
+    const urlTab = tabFromParam(params.get("tab")) ?? (urlSpecId ? "viewer" : null);
+    if (urlSpecId) setViewerActiveSpecId(urlSpecId);
+    if (urlTab) setActiveTab(urlTab);
+    setHasReadUrlState(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasReadUrlState) return;
+    const url = new URL(window.location.href);
+    if (activeTab === "intake") {
+      url.searchParams.delete("tab");
+    } else {
+      url.searchParams.set("tab", activeTab);
+    }
+    if (activeTab === "viewer" && viewerActiveSpecId) {
+      url.searchParams.set("spec", viewerActiveSpecId);
+    } else {
+      url.searchParams.delete("spec");
+    }
+    window.history.replaceState(null, "", url.toString());
+  }, [activeTab, hasReadUrlState, viewerActiveSpecId]);
+
+  useEffect(() => {
+    if (!shareStatus) return;
+    const timeout = window.setTimeout(() => setShareStatus(""), 2500);
+    return () => window.clearTimeout(timeout);
+  }, [shareStatus]);
 
   useEffect(() => {
     refreshSavedSpecs().catch((err) => {
@@ -2057,6 +2130,8 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
             setActiveSpecId={setViewerActiveSpecId}
             isLoading={isViewerLoading}
             onOpenEdit={openSavedSpec}
+            onCopyShareLink={copyViewerShareLink}
+            shareStatus={shareStatus}
           />
         ) : null}
         {activeTab === "specs" ? (

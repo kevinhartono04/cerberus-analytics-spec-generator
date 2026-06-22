@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import postgres from "postgres";
 
 import type {
@@ -15,6 +16,7 @@ import type {
 import { generatedSpecSchema } from "@/lib/types";
 
 const seedPath = path.join(process.cwd(), "data", "analytics_reference_library.json");
+const localSqlitePath = path.join(process.cwd(), "data", "analytics.sqlite");
 
 let cachedLibraryData: LibraryData | null = null;
 let cachedSnapshot: LibrarySnapshot | null = null;
@@ -28,6 +30,29 @@ function getDatabaseUrl() {
     process.env.POSTGRES_PRISMA_URL ||
     process.env.POSTGRES_URL_NON_POOLING
   );
+}
+
+function shouldUseLocalSqlite() {
+  return !getDatabaseUrl() && fs.existsSync(localSqlitePath);
+}
+
+function sqliteLiteral(value: string) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function sqliteJsonRows<T>(sql: string): T[] {
+  const output = execFileSync("sqlite3", ["-json", localSqlitePath, sql], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 32,
+  }).trim();
+  return output ? (JSON.parse(output) as T[]) : [];
+}
+
+function sqliteExec(sql: string) {
+  execFileSync("sqlite3", [localSqlitePath, sql], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 32,
+  });
 }
 
 function asString(value: unknown) {
@@ -88,6 +113,23 @@ async function ensureSavedSpecsTable() {
 
   await savedSpecsTableReady;
   return getSql();
+}
+
+function ensureSqliteSavedSpecsTable() {
+  sqliteExec(`
+    CREATE TABLE IF NOT EXISTS saved_specs (
+      id TEXT PRIMARY KEY NOT NULL,
+      game_title TEXT NOT NULL,
+      genre TEXT NOT NULL,
+      status TEXT NOT NULL,
+      event_count INTEGER NOT NULL,
+      payload_count INTEGER NOT NULL,
+      generated_at TEXT NOT NULL,
+      saved_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      payload TEXT NOT NULL
+    )
+  `);
 }
 
 export function getLibrarySnapshot(): LibrarySnapshot {
@@ -190,6 +232,16 @@ function rowToSavedSpecSummary(row: Record<string, unknown>): SavedSpecSummary {
 }
 
 export async function listSavedSpecs(): Promise<SavedSpecSummary[]> {
+  if (shouldUseLocalSqlite()) {
+    ensureSqliteSavedSpecsTable();
+    const rows = sqliteJsonRows<Record<string, unknown>>(`
+      SELECT id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at
+      FROM saved_specs
+      ORDER BY updated_at DESC
+    `);
+    return rows.map((row) => rowToSavedSpecSummary(row));
+  }
+
   const sql = await ensureSavedSpecsTable();
   const rows = await sql`
     SELECT id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at
@@ -200,6 +252,18 @@ export async function listSavedSpecs(): Promise<SavedSpecSummary[]> {
 }
 
 export async function getSavedSpec(id: string): Promise<GeneratedSpec | null> {
+  if (shouldUseLocalSqlite()) {
+    ensureSqliteSavedSpecsTable();
+    const [row] = sqliteJsonRows<{ payload: string }>(`
+      SELECT payload
+      FROM saved_specs
+      WHERE id = ${sqliteLiteral(id)}
+      LIMIT 1
+    `);
+    if (!row) return null;
+    return generatedSpecSchema.parse(JSON.parse(row.payload));
+  }
+
   const sql = await ensureSavedSpecsTable();
   const [row] = await sql<{ payload: string }[]>`
     SELECT payload
@@ -212,19 +276,71 @@ export async function getSavedSpec(id: string): Promise<GeneratedSpec | null> {
 }
 
 export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
-  const sql = await ensureSavedSpecsTable();
   const spec = generatedSpecSchema.parse(specInput);
-  const [existing] = await sql<{ saved_at: string }[]>`
-    SELECT saved_at
-    FROM saved_specs
-    WHERE id = ${spec.id}
-    LIMIT 1
-  `;
+  const existing = shouldUseLocalSqlite()
+    ? (ensureSqliteSavedSpecsTable(),
+      sqliteJsonRows<{ saved_at: string }>(`
+        SELECT saved_at
+        FROM saved_specs
+        WHERE id = ${sqliteLiteral(spec.id)}
+        LIMIT 1
+      `)[0])
+    : undefined;
   const now = new Date().toISOString();
   const savedAt = existing?.saved_at ?? now;
   const status = specStatus(spec);
   const eventCount = spec.generatedEvents.length;
   const payloadCount = specPayloadCount(spec);
+
+  if (shouldUseLocalSqlite()) {
+    sqliteExec(`
+      INSERT INTO saved_specs (
+        id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at, payload
+      )
+      VALUES (
+        ${sqliteLiteral(spec.id)},
+        ${sqliteLiteral(spec.intake.gameTitle)},
+        ${sqliteLiteral(spec.intake.genre)},
+        ${sqliteLiteral(status)},
+        ${eventCount},
+        ${payloadCount},
+        ${sqliteLiteral(spec.generatedAt)},
+        ${sqliteLiteral(savedAt)},
+        ${sqliteLiteral(now)},
+        ${sqliteLiteral(JSON.stringify(spec))}
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        game_title = excluded.game_title,
+        genre = excluded.genre,
+        status = excluded.status,
+        event_count = excluded.event_count,
+        payload_count = excluded.payload_count,
+        generated_at = excluded.generated_at,
+        updated_at = excluded.updated_at,
+        payload = excluded.payload
+    `);
+
+    return {
+      id: spec.id,
+      gameTitle: spec.intake.gameTitle,
+      genre: spec.intake.genre,
+      status,
+      eventCount,
+      payloadCount,
+      generatedAt: spec.generatedAt,
+      savedAt,
+      updatedAt: now,
+    };
+  }
+
+  const sql = await ensureSavedSpecsTable();
+  const [postgresExisting] = await sql<{ saved_at: string }[]>`
+    SELECT saved_at
+    FROM saved_specs
+    WHERE id = ${spec.id}
+    LIMIT 1
+  `;
+  const postgresSavedAt = postgresExisting?.saved_at ?? savedAt;
 
   await sql`
     INSERT INTO saved_specs (
@@ -238,7 +354,7 @@ export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
       ${eventCount},
       ${payloadCount},
       ${spec.generatedAt},
-      ${savedAt},
+      ${postgresSavedAt},
       ${now},
       ${JSON.stringify(spec)}
     )
@@ -261,12 +377,22 @@ export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
     eventCount,
     payloadCount,
     generatedAt: spec.generatedAt,
-    savedAt,
+    savedAt: postgresSavedAt,
     updatedAt: now,
   };
 }
 
 export async function deleteSavedSpec(id: string) {
+  if (shouldUseLocalSqlite()) {
+    ensureSqliteSavedSpecsTable();
+    const [result] = sqliteJsonRows<{ count: number }>(`
+      DELETE FROM saved_specs
+      WHERE id = ${sqliteLiteral(id)};
+      SELECT changes() AS count;
+    `);
+    return Number(result?.count ?? 0) > 0;
+  }
+
   const sql = await ensureSavedSpecsTable();
   const result = await sql`
     DELETE FROM saved_specs
