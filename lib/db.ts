@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import postgres from "postgres";
 
 import type {
+  AppUser,
   GeneratedSpec,
   GenerationPack,
   LibraryData,
@@ -12,8 +13,9 @@ import type {
   LibrarySnapshot,
   PlatformAdPayload,
   SavedSpecSummary,
+  UserRole,
 } from "@/lib/types";
-import { generatedSpecSchema } from "@/lib/types";
+import { generatedSpecSchema, userRoleSchema } from "@/lib/types";
 
 const seedPath = path.join(process.cwd(), "data", "analytics_reference_library.json");
 const localSqlitePath = path.join(process.cwd(), "data", "analytics.sqlite");
@@ -22,6 +24,7 @@ let cachedLibraryData: LibraryData | null = null;
 let cachedSnapshot: LibrarySnapshot | null = null;
 let sqlClient: postgres.Sql | null = null;
 let savedSpecsTableReady: Promise<void> | null = null;
+let appUsersTableReady: Promise<void> | null = null;
 
 function getDatabaseUrl() {
   return (
@@ -53,6 +56,10 @@ function sqliteExec(sql: string) {
     encoding: "utf8",
     maxBuffer: 1024 * 1024 * 32,
   });
+}
+
+function sqliteColumnExists(table: string, column: string) {
+  return sqliteJsonRows<{ name: string }>(`PRAGMA table_info(${table})`).some((row) => row.name === column);
 }
 
 function asString(value: unknown) {
@@ -90,20 +97,25 @@ function getSql() {
 async function ensureSavedSpecsTable() {
   if (!savedSpecsTableReady) {
     const sql = getSql();
-    savedSpecsTableReady = sql`
-      CREATE TABLE IF NOT EXISTS saved_specs (
-        id TEXT PRIMARY KEY NOT NULL,
-        game_title TEXT NOT NULL,
-        genre TEXT NOT NULL,
-        status TEXT NOT NULL,
-        event_count INTEGER NOT NULL,
-        payload_count INTEGER NOT NULL,
-        generated_at TEXT NOT NULL,
-        saved_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        payload TEXT NOT NULL
-      )
-    `
+    savedSpecsTableReady = sql.begin(async (transaction) => {
+      await transaction`
+        CREATE TABLE IF NOT EXISTS saved_specs (
+          id TEXT PRIMARY KEY NOT NULL,
+          game_title TEXT NOT NULL,
+          genre TEXT NOT NULL,
+          status TEXT NOT NULL,
+          event_count INTEGER NOT NULL,
+          payload_count INTEGER NOT NULL,
+          generated_at TEXT NOT NULL,
+          saved_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          payload TEXT NOT NULL
+        )
+      `;
+      await transaction`ALTER TABLE saved_specs ADD COLUMN IF NOT EXISTS owner_user_id TEXT`;
+      await transaction`ALTER TABLE saved_specs ADD COLUMN IF NOT EXISTS owner_email TEXT`;
+      await transaction`ALTER TABLE saved_specs ADD COLUMN IF NOT EXISTS owner_name TEXT`;
+    })
       .then(() => undefined)
       .catch((error) => {
         savedSpecsTableReady = null;
@@ -128,6 +140,52 @@ function ensureSqliteSavedSpecsTable() {
       saved_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       payload TEXT NOT NULL
+    )
+  `);
+  if (!sqliteColumnExists("saved_specs", "owner_user_id")) {
+    sqliteExec("ALTER TABLE saved_specs ADD COLUMN owner_user_id TEXT");
+  }
+  if (!sqliteColumnExists("saved_specs", "owner_email")) {
+    sqliteExec("ALTER TABLE saved_specs ADD COLUMN owner_email TEXT");
+  }
+  if (!sqliteColumnExists("saved_specs", "owner_name")) {
+    sqliteExec("ALTER TABLE saved_specs ADD COLUMN owner_name TEXT");
+  }
+}
+
+async function ensureAppUsersTable() {
+  if (!appUsersTableReady) {
+    const sql = getSql();
+    appUsersTableReady = sql`
+      CREATE TABLE IF NOT EXISTS app_users (
+        id TEXT PRIMARY KEY NOT NULL,
+        email TEXT NOT NULL,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `
+      .then(() => undefined)
+      .catch((error) => {
+        appUsersTableReady = null;
+        throw error;
+      });
+  }
+
+  await appUsersTableReady;
+  return getSql();
+}
+
+function ensureSqliteAppUsersTable() {
+  sqliteExec(`
+    CREATE TABLE IF NOT EXISTS app_users (
+      id TEXT PRIMARY KEY NOT NULL,
+      email TEXT NOT NULL,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     )
   `);
 }
@@ -218,6 +276,9 @@ function specPayloadCount(spec: GeneratedSpec) {
 }
 
 function rowToSavedSpecSummary(row: Record<string, unknown>): SavedSpecSummary {
+  const ownerUserId = asString(row.owner_user_id);
+  const ownerEmail = asString(row.owner_email);
+  const ownerName = asString(row.owner_name);
   return {
     id: asString(row.id),
     gameTitle: asString(row.game_title),
@@ -228,14 +289,37 @@ function rowToSavedSpecSummary(row: Record<string, unknown>): SavedSpecSummary {
     generatedAt: asString(row.generated_at),
     savedAt: asString(row.saved_at),
     updatedAt: asString(row.updated_at),
+    ...(ownerUserId ? { ownerUserId } : {}),
+    ...(ownerEmail ? { ownerEmail } : {}),
+    ...(ownerName ? { ownerName } : {}),
   };
+}
+
+function rowToAppUser(row: Record<string, unknown>): AppUser {
+  return {
+    id: asString(row.id),
+    email: asString(row.email),
+    name: asString(row.name),
+    role: userRoleSchema.catch("viewer").parse(asString(row.role)),
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+  };
+}
+
+function roleRank(role: UserRole) {
+  return role === "admin" ? 3 : role === "editor" ? 2 : 1;
+}
+
+function syncedRole(existingRole: UserRole, configuredRole: UserRole) {
+  return roleRank(configuredRole) > roleRank(existingRole) ? configuredRole : existingRole;
 }
 
 export async function listSavedSpecs(): Promise<SavedSpecSummary[]> {
   if (shouldUseLocalSqlite()) {
     ensureSqliteSavedSpecsTable();
     const rows = sqliteJsonRows<Record<string, unknown>>(`
-      SELECT id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at
+      SELECT id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at,
+        owner_user_id, owner_email, owner_name
       FROM saved_specs
       ORDER BY updated_at DESC
     `);
@@ -244,11 +328,36 @@ export async function listSavedSpecs(): Promise<SavedSpecSummary[]> {
 
   const sql = await ensureSavedSpecsTable();
   const rows = await sql`
-    SELECT id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at
+    SELECT id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at,
+      owner_user_id, owner_email, owner_name
     FROM saved_specs
     ORDER BY updated_at DESC
   `;
   return rows.map((row) => rowToSavedSpecSummary(row));
+}
+
+export async function getSavedSpecSummary(id: string): Promise<SavedSpecSummary | null> {
+  if (shouldUseLocalSqlite()) {
+    ensureSqliteSavedSpecsTable();
+    const [row] = sqliteJsonRows<Record<string, unknown>>(`
+      SELECT id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at,
+        owner_user_id, owner_email, owner_name
+      FROM saved_specs
+      WHERE id = ${sqliteLiteral(id)}
+      LIMIT 1
+    `);
+    return row ? rowToSavedSpecSummary(row) : null;
+  }
+
+  const sql = await ensureSavedSpecsTable();
+  const [row] = await sql`
+    SELECT id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at,
+      owner_user_id, owner_email, owner_name
+    FROM saved_specs
+    WHERE id = ${id}
+    LIMIT 1
+  `;
+  return row ? rowToSavedSpecSummary(row) : null;
 }
 
 export async function getSavedSpec(id: string): Promise<GeneratedSpec | null> {
@@ -275,12 +384,12 @@ export async function getSavedSpec(id: string): Promise<GeneratedSpec | null> {
   return generatedSpecSchema.parse(JSON.parse(row.payload));
 }
 
-export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
+export async function saveSpec(specInput: unknown, owner: AppUser): Promise<SavedSpecSummary> {
   const spec = generatedSpecSchema.parse(specInput);
   const existing = shouldUseLocalSqlite()
     ? (ensureSqliteSavedSpecsTable(),
-      sqliteJsonRows<{ saved_at: string }>(`
-        SELECT saved_at
+      sqliteJsonRows<{ saved_at: string; owner_user_id: string | null; owner_email: string | null; owner_name: string | null }>(`
+        SELECT saved_at, owner_user_id, owner_email, owner_name
         FROM saved_specs
         WHERE id = ${sqliteLiteral(spec.id)}
         LIMIT 1
@@ -288,6 +397,9 @@ export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
     : undefined;
   const now = new Date().toISOString();
   const savedAt = existing?.saved_at ?? now;
+  const ownerUserId = existing ? asString(existing.owner_user_id) : owner.id;
+  const ownerEmail = existing ? asString(existing.owner_email) : owner.email;
+  const ownerName = existing ? asString(existing.owner_name) : owner.name;
   const status = specStatus(spec);
   const eventCount = spec.generatedEvents.length;
   const payloadCount = specPayloadCount(spec);
@@ -295,7 +407,8 @@ export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
   if (shouldUseLocalSqlite()) {
     sqliteExec(`
       INSERT INTO saved_specs (
-        id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at, payload
+        id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at,
+        owner_user_id, owner_email, owner_name, payload
       )
       VALUES (
         ${sqliteLiteral(spec.id)},
@@ -307,6 +420,9 @@ export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
         ${sqliteLiteral(spec.generatedAt)},
         ${sqliteLiteral(savedAt)},
         ${sqliteLiteral(now)},
+        ${sqliteLiteral(ownerUserId)},
+        ${sqliteLiteral(ownerEmail)},
+        ${sqliteLiteral(ownerName)},
         ${sqliteLiteral(JSON.stringify(spec))}
       )
       ON CONFLICT(id) DO UPDATE SET
@@ -330,21 +446,30 @@ export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
       generatedAt: spec.generatedAt,
       savedAt,
       updatedAt: now,
+      ...(ownerUserId ? { ownerUserId } : {}),
+      ...(ownerEmail ? { ownerEmail } : {}),
+      ...(ownerName ? { ownerName } : {}),
     };
   }
 
   const sql = await ensureSavedSpecsTable();
-  const [postgresExisting] = await sql<{ saved_at: string }[]>`
-    SELECT saved_at
+  const [postgresExisting] = await sql<
+    { saved_at: string; owner_user_id: string | null; owner_email: string | null; owner_name: string | null }[]
+  >`
+    SELECT saved_at, owner_user_id, owner_email, owner_name
     FROM saved_specs
     WHERE id = ${spec.id}
     LIMIT 1
   `;
   const postgresSavedAt = postgresExisting?.saved_at ?? savedAt;
+  const postgresOwnerUserId = postgresExisting ? asString(postgresExisting.owner_user_id) : owner.id;
+  const postgresOwnerEmail = postgresExisting ? asString(postgresExisting.owner_email) : owner.email;
+  const postgresOwnerName = postgresExisting ? asString(postgresExisting.owner_name) : owner.name;
 
   await sql`
     INSERT INTO saved_specs (
-      id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at, payload
+      id, game_title, genre, status, event_count, payload_count, generated_at, saved_at, updated_at,
+      owner_user_id, owner_email, owner_name, payload
     )
     VALUES (
       ${spec.id},
@@ -356,6 +481,9 @@ export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
       ${spec.generatedAt},
       ${postgresSavedAt},
       ${now},
+      ${postgresOwnerUserId},
+      ${postgresOwnerEmail},
+      ${postgresOwnerName},
       ${JSON.stringify(spec)}
     )
     ON CONFLICT(id) DO UPDATE SET
@@ -379,7 +507,124 @@ export async function saveSpec(specInput: unknown): Promise<SavedSpecSummary> {
     generatedAt: spec.generatedAt,
     savedAt: postgresSavedAt,
     updatedAt: now,
+    ...(postgresOwnerUserId ? { ownerUserId: postgresOwnerUserId } : {}),
+    ...(postgresOwnerEmail ? { ownerEmail: postgresOwnerEmail } : {}),
+    ...(postgresOwnerName ? { ownerName: postgresOwnerName } : {}),
   };
+}
+
+export async function syncAppUser(identity: { id: string; email: string; name: string }, initialRole: UserRole): Promise<AppUser> {
+  const now = new Date().toISOString();
+
+  if (shouldUseLocalSqlite()) {
+    ensureSqliteAppUsersTable();
+    const existing = sqliteJsonRows<Record<string, unknown>>(`
+      SELECT id, email, name, role, created_at, updated_at
+      FROM app_users
+      WHERE id = ${sqliteLiteral(identity.id)}
+      LIMIT 1
+    `)[0];
+    if (existing) {
+      const role = syncedRole(userRoleSchema.catch("viewer").parse(asString(existing.role)), initialRole);
+      sqliteExec(`
+        UPDATE app_users
+        SET email = ${sqliteLiteral(identity.email)},
+          name = ${sqliteLiteral(identity.name)},
+          role = ${sqliteLiteral(role)},
+          updated_at = ${sqliteLiteral(now)}
+        WHERE id = ${sqliteLiteral(identity.id)}
+      `);
+      return { ...rowToAppUser(existing), email: identity.email, name: identity.name, role, updatedAt: now };
+    }
+
+    sqliteExec(`
+      INSERT INTO app_users (id, email, name, role, created_at, updated_at)
+      VALUES (
+        ${sqliteLiteral(identity.id)},
+        ${sqliteLiteral(identity.email)},
+        ${sqliteLiteral(identity.name)},
+        ${sqliteLiteral(initialRole)},
+        ${sqliteLiteral(now)},
+        ${sqliteLiteral(now)}
+      )
+    `);
+    return { ...identity, role: initialRole, createdAt: now, updatedAt: now };
+  }
+
+  const sql = await ensureAppUsersTable();
+  const [existing] = await sql<Record<string, unknown>[]>`
+    SELECT id, email, name, role, created_at, updated_at
+    FROM app_users
+    WHERE id = ${identity.id}
+    LIMIT 1
+  `;
+  if (existing) {
+    const role = syncedRole(userRoleSchema.catch("viewer").parse(asString(existing.role)), initialRole);
+    await sql`
+      UPDATE app_users
+      SET email = ${identity.email},
+        name = ${identity.name},
+        role = ${role},
+        updated_at = ${now}
+      WHERE id = ${identity.id}
+    `;
+    return { ...rowToAppUser(existing), email: identity.email, name: identity.name, role, updatedAt: now };
+  }
+
+  await sql`
+    INSERT INTO app_users (id, email, name, role, created_at, updated_at)
+    VALUES (${identity.id}, ${identity.email}, ${identity.name}, ${initialRole}, ${now}, ${now})
+  `;
+  return { ...identity, role: initialRole, createdAt: now, updatedAt: now };
+}
+
+export async function listAppUsers(): Promise<AppUser[]> {
+  if (shouldUseLocalSqlite()) {
+    ensureSqliteAppUsersTable();
+    const rows = sqliteJsonRows<Record<string, unknown>>(`
+      SELECT id, email, name, role, created_at, updated_at
+      FROM app_users
+      ORDER BY email ASC
+    `);
+    return rows.map((row) => rowToAppUser(row));
+  }
+
+  const sql = await ensureAppUsersTable();
+  const rows = await sql`
+    SELECT id, email, name, role, created_at, updated_at
+    FROM app_users
+    ORDER BY email ASC
+  `;
+  return rows.map((row) => rowToAppUser(row));
+}
+
+export async function updateAppUserRole(id: string, role: UserRole): Promise<AppUser | null> {
+  const now = new Date().toISOString();
+
+  if (shouldUseLocalSqlite()) {
+    ensureSqliteAppUsersTable();
+    sqliteExec(`
+      UPDATE app_users
+      SET role = ${sqliteLiteral(role)}, updated_at = ${sqliteLiteral(now)}
+      WHERE id = ${sqliteLiteral(id)}
+    `);
+    const row = sqliteJsonRows<Record<string, unknown>>(`
+      SELECT id, email, name, role, created_at, updated_at
+      FROM app_users
+      WHERE id = ${sqliteLiteral(id)}
+      LIMIT 1
+    `)[0];
+    return row ? rowToAppUser(row) : null;
+  }
+
+  const sql = await ensureAppUsersTable();
+  const [row] = await sql<Record<string, unknown>[]>`
+    UPDATE app_users
+    SET role = ${role}, updated_at = ${now}
+    WHERE id = ${id}
+    RETURNING id, email, name, role, created_at, updated_at
+  `;
+  return row ? rowToAppUser(row) : null;
 }
 
 export async function deleteSavedSpec(id: string) {

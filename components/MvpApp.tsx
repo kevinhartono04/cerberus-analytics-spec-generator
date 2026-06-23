@@ -9,13 +9,17 @@ import {
   FileText,
   Link2,
   Library,
+  LogIn,
+  LogOut,
   Play,
   Plus,
   Save,
   Search,
+  Shield,
   Sparkles,
   Table2,
   Trash2,
+  UserCog,
   Wand2,
   type LucideIcon,
 } from "lucide-react";
@@ -29,11 +33,13 @@ import {
   GeneratedSpec,
   GameIntake,
   intakeSchema,
+  AppUser,
   LibrarySnapshot,
   SavedSpecSummary,
+  UserRole,
 } from "@/lib/types";
 
-type Tab = "intake" | "review" | "viewer" | "specs" | "library";
+type Tab = "intake" | "review" | "viewer" | "specs" | "library" | "users";
 
 const navigationItems: Array<{ tab: Tab; label: string; icon: LucideIcon }> = [
   { tab: "intake", label: "Intake", icon: Wand2 },
@@ -41,14 +47,27 @@ const navigationItems: Array<{ tab: Tab; label: string; icon: LucideIcon }> = [
   { tab: "viewer", label: "Spec Viewer", icon: Table2 },
   { tab: "specs", label: "Saved Specs", icon: FileText },
   { tab: "library", label: "Library", icon: Library },
+  { tab: "users", label: "Users", icon: UserCog },
 ];
 
 function tabFromParam(value: string | null): Tab | null {
-  if (value === "intake" || value === "review" || value === "viewer" || value === "specs" || value === "library") {
+  if (
+    value === "intake" ||
+    value === "review" ||
+    value === "viewer" ||
+    value === "specs" ||
+    value === "library" ||
+    value === "users"
+  ) {
     return value;
   }
   return null;
 }
+
+type AuthState = {
+  authenticated: boolean;
+  user: AppUser | null;
+};
 
 const exampleIntake: GameIntake = {
   gameTitle: "Sample Match Timed",
@@ -115,6 +134,36 @@ const intakeOptionGroups: Array<{
 
 const rewardedAdPlacementOptions = ["2x_rewards", "daily_reward", "ad_reward", "powerup"];
 const interstitialAdPlacementOptions = ["game_end", "session_resume", "mid_game"];
+
+const roleLabels: Record<UserRole, string> = {
+  admin: "Admin",
+  editor: "Editor",
+  viewer: "Viewer",
+};
+
+function canCreateSpecs(user: AppUser | null) {
+  return user?.role === "admin" || user?.role === "editor";
+}
+
+function canManageUsers(user: AppUser | null) {
+  return user?.role === "admin";
+}
+
+function summaryFromSpec(spec: GeneratedSpec): SavedSpecSummary {
+  return {
+    id: spec.id,
+    gameTitle: spec.intake.gameTitle,
+    genre: spec.intake.genre,
+    status: reviewStatusForEvents(spec.generatedEvents),
+    eventCount: spec.generatedEvents.length,
+    payloadCount: spec.generatedEvents.reduce((total, event) => total + event.payloadFields.length, 0) + spec.platformAdPayloads.length,
+    generatedAt: spec.generatedAt,
+    savedAt: spec.generatedAt,
+    updatedAt: spec.generatedAt,
+    canEdit: false,
+    canDelete: false,
+  };
+}
 
 function Field({
   label,
@@ -470,6 +519,7 @@ function PayloadDetailsEditor({
   onDelete,
   onDuplicate,
   onAdd,
+  canEdit,
 }: {
   eventName: string;
   payloadFields: GeneratedPayloadField[];
@@ -477,6 +527,7 @@ function PayloadDetailsEditor({
   onDelete: (payloadIndex: number) => void;
   onDuplicate: (payloadIndex: number) => void;
   onAdd: () => void;
+  canEdit: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -488,6 +539,7 @@ function PayloadDetailsEditor({
               <input
                 aria-label={`${eventName} payload name ${payloadIndex + 1}`}
                 value={payload.canonicalFieldName}
+                readOnly={!canEdit}
                 onChange={(event) =>
                   onChange(payloadIndex, {
                     fieldName: event.target.value,
@@ -502,6 +554,7 @@ function PayloadDetailsEditor({
               <textarea
                 aria-label={`${eventName} ${payload.canonicalFieldName} description`}
                 value={payload.description}
+                readOnly={!canEdit}
                 onChange={(event) => onChange(payloadIndex, { description: event.target.value })}
                 className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-2 py-1 text-sm"
               />
@@ -511,6 +564,7 @@ function PayloadDetailsEditor({
               <textarea
                 aria-label={`${eventName} ${payload.canonicalFieldName} example`}
                 value={payload.example}
+                readOnly={!canEdit}
                 onChange={(event) => onChange(payloadIndex, { example: event.target.value })}
                 className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-2 py-1 font-mono text-sm text-emerald"
               />
@@ -518,16 +572,18 @@ function PayloadDetailsEditor({
             <div className="mt-5 flex flex-wrap gap-2 lg:flex-col">
               <button
                 type="button"
+                disabled={!canEdit}
                 onClick={() => onDuplicate(payloadIndex)}
-                className="focus-ring inline-flex h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-semibold hover:bg-sage"
+                className="focus-ring inline-flex h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-semibold hover:bg-sage disabled:opacity-50"
               >
                 <Copy className="h-3.5 w-3.5" />
                 Duplicate
               </button>
               <button
                 type="button"
+                disabled={!canEdit}
                 onClick={() => onDelete(payloadIndex)}
-                className="focus-ring inline-flex h-9 items-center justify-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-2 text-xs font-semibold text-rose hover:bg-rose/20"
+                className="focus-ring inline-flex h-9 items-center justify-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-2 text-xs font-semibold text-rose hover:bg-rose/20 disabled:opacity-50"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Remove
@@ -538,8 +594,9 @@ function PayloadDetailsEditor({
       ))}
       <button
         type="button"
+        disabled={!canEdit}
         onClick={onAdd}
-        className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-white px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+        className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-white px-3 py-2 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50"
       >
         <Plus className="h-3.5 w-3.5" />
         Add Payload
@@ -580,6 +637,52 @@ function SidebarNavButton({
       <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-white" : "text-slate-500 group-hover:text-ink"}`} />
       {collapsed ? null : <span className="truncate max-md:hidden">{item.label}</span>}
     </button>
+  );
+}
+
+function AuthPanel({ auth, collapsed }: { auth: AuthState; collapsed: boolean }) {
+  if (!auth.authenticated || !auth.user) {
+    return (
+      <a
+        href="/sign-in"
+        title={collapsed ? "Sign in" : undefined}
+        className={`focus-ring flex h-10 w-full items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-cobalt hover:bg-sage ${
+          collapsed ? "justify-center" : "justify-start max-md:justify-center"
+        }`}
+      >
+        <LogIn className="h-4 w-4" />
+        {collapsed ? null : <span className="max-md:hidden">Sign in</span>}
+      </a>
+    );
+  }
+
+  return (
+    <div className={collapsed ? "space-y-2 text-center" : "space-y-2"}>
+      {collapsed ? (
+        <div title={`${auth.user.email} · ${roleLabels[auth.user.role]}`} className="mx-auto flex h-10 w-10 items-center justify-center rounded-md bg-sage">
+          <Shield className="h-4 w-4 text-cobalt" />
+        </div>
+      ) : (
+        <div className="max-md:hidden">
+          <div className="truncate text-sm font-bold text-ink">{auth.user.name || auth.user.email}</div>
+          <div className="truncate text-xs text-slate-500">{auth.user.email}</div>
+          <div className="mt-2 inline-flex items-center gap-1 rounded-full border border-cobalt/30 bg-cobalt/10 px-2 py-1 text-[11px] font-bold uppercase text-cobalt">
+            <Shield className="h-3 w-3" />
+            {roleLabels[auth.user.role]}
+          </div>
+        </div>
+      )}
+      <a
+        href="/api/auth/signout?callbackUrl=/sign-in"
+        title={collapsed ? "Sign out" : undefined}
+        className={`focus-ring flex h-9 w-full items-center gap-2 rounded-md border border-line bg-mist px-3 text-xs font-semibold text-slate-600 hover:bg-sage hover:text-ink ${
+          collapsed ? "justify-center" : "justify-start max-md:justify-center"
+        }`}
+      >
+        <LogOut className="h-3.5 w-3.5" />
+        {collapsed ? null : <span className="max-md:hidden">Sign out</span>}
+      </a>
+    </div>
   );
 }
 
@@ -675,11 +778,13 @@ function SpecReview({
   setSpec,
   onSave,
   saveStatus,
+  canEdit,
 }: {
   spec: GeneratedSpec | null;
   setSpec: (spec: GeneratedSpec) => void;
   onSave: () => Promise<void>;
   saveStatus: string;
+  canEdit: boolean;
 }) {
   const [globalFilter, setGlobalFilter] = useState("");
   const [selectedEventIndex, setSelectedEventIndex] = useState(0);
@@ -849,16 +954,18 @@ function SpecReview({
         <div className="flex gap-2">
           <button
             type="button"
+            disabled={!canEdit}
             onClick={addCustomEvent}
-            className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+            className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50"
           >
             <Plus className="h-4 w-4" />
             Add Event
           </button>
           <button
             type="button"
+            disabled={!canEdit}
             onClick={onSave}
-            className="focus-ring inline-flex items-center gap-2 rounded-md bg-cobalt px-3 py-2 text-sm font-semibold text-white hover:bg-cobalt/90"
+            className="focus-ring inline-flex items-center gap-2 rounded-md bg-cobalt px-3 py-2 text-sm font-semibold text-white hover:bg-cobalt/90 disabled:opacity-50"
           >
             <Save className="h-4 w-4" />
             Save Spec
@@ -933,8 +1040,9 @@ function SpecReview({
                   </div>
                   <button
                     type="button"
+                    disabled={!canEdit}
                     onClick={() => deleteEvent(selectedEventIndex)}
-                    className="focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-rose/40 bg-rose/10 px-3 py-2 text-sm font-semibold text-rose hover:bg-rose/20"
+                    className="focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-rose/40 bg-rose/10 px-3 py-2 text-sm font-semibold text-rose hover:bg-rose/20 disabled:opacity-50"
                   >
                     <Trash2 className="h-4 w-4" />
                     Delete Event
@@ -946,6 +1054,7 @@ function SpecReview({
                     <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Event Name</span>
                     <input
                       value={selectedEvent.eventName}
+                      readOnly={!canEdit}
                       onChange={(event) => updateEvent(selectedEventIndex, { eventName: event.target.value })}
                       className="focus-ring h-11 w-full rounded-md border border-line px-3 text-sm font-semibold"
                     />
@@ -954,6 +1063,7 @@ function SpecReview({
                     <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Status</span>
                     <select
                       value={selectedEvent.status}
+                      disabled={!canEdit}
                       onChange={(event) => updateEvent(selectedEventIndex, { status: event.target.value })}
                       className="focus-ring h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
                     >
@@ -968,6 +1078,7 @@ function SpecReview({
                   <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Trigger Condition</span>
                   <textarea
                     value={selectedEvent.trigger}
+                    readOnly={!canEdit}
                     onChange={(event) => updateEvent(selectedEventIndex, { trigger: event.target.value })}
                     className="focus-ring min-h-24 w-full rounded-md border border-line px-3 py-2 text-sm"
                   />
@@ -984,6 +1095,7 @@ function SpecReview({
                       <input
                         aria-label={`${selectedEvent.eventName} argument type`}
                         value={selectedEvent.argumentName}
+                        readOnly={!canEdit}
                         onChange={(event) => updateEvent(selectedEventIndex, { argumentName: event.target.value })}
                         className="focus-ring h-10 w-full rounded-md border border-line bg-white px-3 font-mono text-sm font-semibold text-cobalt"
                         placeholder="reason"
@@ -994,6 +1106,7 @@ function SpecReview({
                       <textarea
                         aria-label={`${selectedEvent.eventName} argument value description`}
                         value={selectedEvent.argumentDescription}
+                        readOnly={!canEdit}
                         onChange={(event) => updateEvent(selectedEventIndex, { argumentDescription: event.target.value })}
                         className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-3 py-2 text-sm"
                         placeholder="<the reason for the game round to end>"
@@ -1004,6 +1117,7 @@ function SpecReview({
                       <textarea
                         aria-label={`${selectedEvent.eventName} argument value example`}
                         value={selectedEvent.argumentExamples}
+                        readOnly={!canEdit}
                         onChange={(event) => updateEvent(selectedEventIndex, { argumentExamples: event.target.value })}
                         className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-3 py-2 font-mono text-sm text-emerald"
                         placeholder='"win", "lose"'
@@ -1026,6 +1140,7 @@ function SpecReview({
                     onDelete={(payloadIndex) => deleteEventPayload(selectedEventIndex, payloadIndex)}
                     onDuplicate={(payloadIndex) => duplicateEventPayload(selectedEventIndex, payloadIndex)}
                     onAdd={() => addEventPayload(selectedEventIndex)}
+                    canEdit={canEdit}
                   />
                 </div>
               </div>
@@ -1135,6 +1250,7 @@ function SpecReview({
                       data-testid="ad-payload-name"
                       aria-label={`${selectedAdPayloadGroup.adFamily} ${selectedAdPayloadGroup.canonicalPayloadName} payload name`}
                       value={selectedAdPayloadGroup.canonicalPayloadName}
+                      readOnly={!canEdit}
                       onChange={(event) => {
                         const nextName = event.target.value;
                         updatePlatformAdPayloadGroup(selectedAdPayloadGroup, {
@@ -1153,6 +1269,7 @@ function SpecReview({
                       data-testid="ad-payload-requiredness"
                       aria-label={`${selectedAdPayloadGroup.adFamily} ${selectedAdPayloadGroup.canonicalPayloadName} requiredness`}
                       value={selectedAdPayloadGroup.requiredness}
+                      readOnly={!canEdit}
                       onChange={(event) =>
                         updatePlatformAdPayloadGroup(selectedAdPayloadGroup, { requiredness: event.target.value })
                       }
@@ -1166,6 +1283,7 @@ function SpecReview({
                       data-testid="ad-payload-description"
                       aria-label={`${selectedAdPayloadGroup.adFamily} ${selectedAdPayloadGroup.canonicalPayloadName} platform description`}
                       value={selectedAdPayloadGroup.description}
+                      readOnly={!canEdit}
                       onChange={(event) =>
                         updatePlatformAdPayloadGroup(selectedAdPayloadGroup, { description: event.target.value })
                       }
@@ -1179,6 +1297,7 @@ function SpecReview({
                       data-testid="ad-payload-example"
                       aria-label={`${selectedAdPayloadGroup.adFamily} ${selectedAdPayloadGroup.canonicalPayloadName} platform example`}
                       value={selectedAdPayloadGroup.example}
+                      readOnly={!canEdit}
                       onChange={(event) => updatePlatformAdPayloadGroup(selectedAdPayloadGroup, { example: event.target.value })}
                       className="focus-ring min-h-20 w-full rounded-md border border-line px-3 py-2 font-mono text-sm"
                     />
@@ -1221,16 +1340,17 @@ function SavedSpecsBrowser({
       <div className="flex flex-col justify-between gap-2 md:flex-row md:items-end">
         <div>
           <h2 className="text-xl font-bold text-ink">Saved Game Specs</h2>
-          <p className="text-sm text-slate-600">Open a saved spec to review, edit, and save changes again.</p>
+          <p className="text-sm text-slate-600">Open saved specs with access based on your role.</p>
         </div>
         <Metric label="Saved Specs" value={savedSpecs.length} />
       </div>
 
       <div className="overflow-hidden rounded-md border border-line bg-white shadow-sm">
-        <table className="w-full min-w-[880px] text-left text-sm">
+        <table className="w-full min-w-[980px] text-left text-sm">
           <thead className="bg-sage text-xs uppercase text-slate-600">
             <tr>
               <th className="px-3 py-2">Game</th>
+              <th className="px-3 py-2">Owner</th>
               <th className="px-3 py-2">Genre</th>
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Events</th>
@@ -1245,6 +1365,10 @@ function SavedSpecsBrowser({
                 <td className="px-3 py-3">
                   <div className="font-semibold text-ink">{savedSpec.gameTitle}</div>
                   <div className="text-xs text-slate-500">Generated {new Date(savedSpec.generatedAt).toLocaleString()}</div>
+                </td>
+                <td className="px-3 py-3">
+                  <div className="font-semibold text-ink">{savedSpec.ownerName || "Legacy"}</div>
+                  <div className="text-xs text-slate-500">{savedSpec.ownerEmail || "Unassigned"}</div>
                 </td>
                 <td className="px-3 py-3">{savedSpec.genre || "Unspecified"}</td>
                 <td className="px-3 py-3">
@@ -1263,20 +1387,128 @@ function SavedSpecsBrowser({
                       <FileText className="h-3.5 w-3.5" />
                       Open
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (window.confirm(`Delete ${savedSpec.gameTitle}?`)) void onDelete(savedSpec.id);
-                      }}
-                      className="focus-ring inline-flex items-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-3 py-2 text-xs font-semibold text-rose hover:bg-rose/20"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Delete
-                    </button>
+                    {savedSpec.canDelete ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`Delete ${savedSpec.gameTitle}?`)) void onDelete(savedSpec.id);
+                        }}
+                        className="focus-ring inline-flex items-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-3 py-2 text-xs font-semibold text-rose hover:bg-rose/20"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
+                      </button>
+                    ) : null}
                   </div>
                 </td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function UserRoleAdmin({ currentUser }: { currentUser: AppUser | null }) {
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [status, setStatus] = useState("");
+
+  async function loadUsers() {
+    setIsLoading(true);
+    setStatus("");
+    try {
+      const response = await fetch("/api/users");
+      if (!response.ok) throw new Error(await response.text());
+      setUsers((await response.json()) as AppUser[]);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not load users");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function updateRole(id: string, role: UserRole) {
+    setStatus("Saving role...");
+    try {
+      const response = await fetch(`/api/users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const updated = (await response.json()) as AppUser;
+      setUsers((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      setStatus("Role updated");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not update role");
+    }
+  }
+
+  useEffect(() => {
+    void loadUsers();
+  }, []);
+
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-col justify-between gap-2 md:flex-row md:items-end">
+        <div>
+          <h2 className="text-xl font-bold text-ink">User Roles</h2>
+          <p className="text-sm text-slate-600">Assign admin, editor, or viewer access for signed-in users.</p>
+        </div>
+        <Metric label="Users" value={users.length} />
+      </div>
+
+      {status ? <p className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-cobalt">{status}</p> : null}
+
+      <div className="overflow-hidden rounded-md border border-line bg-white shadow-sm">
+        <table className="w-full min-w-[760px] text-left text-sm">
+          <thead className="bg-sage text-xs uppercase text-slate-600">
+            <tr>
+              <th className="px-3 py-2">User</th>
+              <th className="px-3 py-2">Role</th>
+              <th className="px-3 py-2">Updated</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {users.map((user) => (
+              <tr key={user.id}>
+                <td className="px-3 py-3">
+                  <div className="font-semibold text-ink">{user.name || user.email}</div>
+                  <div className="text-xs text-slate-500">{user.email}</div>
+                </td>
+                <td className="px-3 py-3">
+                  <select
+                    value={user.role}
+                    disabled={user.id === currentUser?.id}
+                    onChange={(event) => void updateRole(user.id, event.target.value as UserRole)}
+                    className="focus-ring h-10 rounded-md border border-line bg-white px-3 text-sm font-semibold disabled:opacity-60"
+                  >
+                    {(["admin", "editor", "viewer"] as UserRole[]).map((role) => (
+                      <option key={role} value={role}>
+                        {roleLabels[role]}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td className="px-3 py-3">{new Date(user.updatedAt).toLocaleString()}</td>
+              </tr>
+            ))}
+            {!users.length && !isLoading ? (
+              <tr>
+                <td colSpan={3} className="px-3 py-8 text-center text-sm text-slate-500">
+                  No users have signed in yet.
+                </td>
+              </tr>
+            ) : null}
+            {isLoading ? (
+              <tr>
+                <td colSpan={3} className="px-3 py-8 text-center text-sm text-slate-500">
+                  Loading users...
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
@@ -1615,6 +1847,7 @@ function SpecViewer({
   onOpenEdit,
   onCopyShareLink,
   shareStatus,
+  canEditActiveSpec,
 }: {
   specs: GeneratedSpec[];
   savedSpecs: SavedSpecSummary[];
@@ -1624,6 +1857,7 @@ function SpecViewer({
   onOpenEdit: (id: string) => Promise<void>;
   onCopyShareLink: (id: string) => Promise<void>;
   shareStatus: string;
+  canEditActiveSpec: (id: string) => boolean;
 }) {
   const [query, setQuery] = useState("");
   const [activeGroupId, setActiveGroupId] = useState<SpecViewerGroupId>("gameplay");
@@ -1702,14 +1936,16 @@ function SpecViewer({
               <Link2 className="h-4 w-4" />
               Copy Link
             </button>
-            <button
-              type="button"
-              onClick={() => onOpenEdit(activeSpec.id)}
-              className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
-            >
-              <FileText className="h-4 w-4" />
-              Edit Spec
-            </button>
+            {canEditActiveSpec(activeSpec.id) ? (
+              <button
+                type="button"
+                onClick={() => onOpenEdit(activeSpec.id)}
+                className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+              >
+                <FileText className="h-4 w-4" />
+                Edit Spec
+              </button>
+            ) : null}
           </div>
         </div>
         {shareStatus ? <div className="border-b border-line px-4 py-2 text-xs font-semibold text-cobalt">{shareStatus}</div> : null}
@@ -1855,6 +2091,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
   const [error, setError] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
   const [shareStatus, setShareStatus] = useState("");
+  const [auth, setAuth] = useState<AuthState>({ authenticated: false, user: null });
 
   const form = useForm<GameIntake>({
     resolver: zodResolver(intakeSchema),
@@ -1884,6 +2121,16 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
   const formErrors = Object.values(form.formState.errors)
     .map((formError) => formError?.message)
     .filter(Boolean);
+  const visibleNavigationItems = navigationItems.filter((item) => item.tab !== "users" || canManageUsers(auth.user));
+  const activeSavedSpec = spec ? savedSpecs.find((savedSpec) => savedSpec.id === spec.id) : undefined;
+  const canCreateOrEdit = canCreateSpecs(auth.user);
+  const canSaveActiveSpec = canCreateOrEdit && (activeSavedSpec ? Boolean(activeSavedSpec.canEdit) : true);
+
+  async function refreshMe() {
+    const response = await fetch("/api/me");
+    if (!response.ok) throw new Error(await response.text());
+    setAuth((await response.json()) as AuthState);
+  }
 
   async function refreshSavedSpecs() {
     const response = await fetch("/api/specs");
@@ -1914,6 +2161,16 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
     setIsViewerLoading(true);
     setError("");
     try {
+      if (targetSpecId && !auth.authenticated) {
+        const specResponse = await fetch(`/api/specs/${targetSpecId}`);
+        if (!specResponse.ok) throw new Error(await specResponse.text());
+        const publicSpec = (await specResponse.json()) as GeneratedSpec;
+        setViewerSpecs([publicSpec]);
+        setSavedSpecs([summaryFromSpec(publicSpec)]);
+        setViewerActiveSpecId(publicSpec.id);
+        return;
+      }
+
       const response = await fetch("/api/specs");
       if (!response.ok) throw new Error(await response.text());
       const summaries = (await response.json()) as SavedSpecSummary[];
@@ -1968,18 +2225,38 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
   }, [shareStatus]);
 
   useEffect(() => {
-    refreshSavedSpecs().catch((err) => {
-      setError(err instanceof Error ? err.message : "Could not load saved specs");
+    refreshMe().catch((err) => {
+      setError(err instanceof Error ? err.message : "Could not load user");
     });
   }, []);
 
   useEffect(() => {
-    if (activeTab === "viewer") {
+    if (!auth.authenticated) return;
+    refreshSavedSpecs().catch((err) => {
+      setError(err instanceof Error ? err.message : "Could not load saved specs");
+    });
+  }, [auth.authenticated, auth.user?.id]);
+
+  useEffect(() => {
+    if (auth.user?.role === "viewer" && (activeTab === "intake" || activeTab === "review")) {
+      setActiveTab("viewer");
+    }
+    if (!canManageUsers(auth.user) && activeTab === "users") {
+      setActiveTab("viewer");
+    }
+  }, [activeTab, auth.user]);
+
+  useEffect(() => {
+    if (activeTab === "viewer" && hasReadUrlState) {
       void loadViewerSpecs();
     }
-  }, [activeTab]);
+  }, [activeTab, auth.authenticated, hasReadUrlState]);
 
   async function onSubmit(values: GameIntake) {
+    if (!canCreateOrEdit) {
+      setError("Only admins and editors can generate specs.");
+      return;
+    }
     setIsGenerating(true);
     setError("");
     setSaveStatus("");
@@ -2003,6 +2280,10 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
 
   async function saveCurrentSpec() {
     if (!spec) return;
+    if (!canSaveActiveSpec) {
+      setError("You do not have permission to save this spec.");
+      return;
+    }
     setError("");
     setSaveStatus("Saving...");
     try {
@@ -2024,6 +2305,12 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
 
   async function openSavedSpec(id: string) {
     setError("");
+    const summary = savedSpecs.find((item) => item.id === id);
+    if (summary && !summary.canEdit) {
+      setViewerActiveSpecId(id);
+      setActiveTab("viewer");
+      return;
+    }
     const response = await fetch(`/api/specs/${id}`);
     if (!response.ok) {
       setError(await response.text());
@@ -2062,20 +2349,23 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
         >
           <div className={`border-b border-line px-4 py-5 ${sidebarCollapsed ? "text-center" : ""}`}>
             <div
-              className={`flex items-center gap-2 font-mono text-xs font-semibold uppercase text-cobalt ${
+              className={`flex items-center gap-3 ${
                 sidebarCollapsed ? "justify-center" : "max-md:justify-center"
               }`}
             >
-              <Wand2 className="h-4 w-4" />
-              {sidebarCollapsed ? null : <span className="max-md:hidden">Local MVP</span>}
+              <img
+                src="/cerberus_logo_512.png"
+                alt="Cerberus Analytics Hub"
+                className="h-10 w-10 shrink-0 rounded-md object-contain"
+              />
+              {sidebarCollapsed ? null : (
+                <h1 className="text-lg font-bold leading-tight text-ink max-md:hidden">Cerberus Analytics Hub</h1>
+              )}
             </div>
-            {sidebarCollapsed ? null : (
-              <h1 className="mt-2 text-xl font-bold leading-tight text-ink max-md:hidden">Game Analytics Spec Generator</h1>
-            )}
           </div>
 
           <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Primary navigation">
-            {navigationItems.map((item) => (
+            {visibleNavigationItems.map((item) => (
               <SidebarNavButton
                 key={item.tab}
                 item={item}
@@ -2085,6 +2375,10 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
               />
             ))}
           </nav>
+
+          <div className="border-t border-line p-3">
+            <AuthPanel auth={auth} collapsed={sidebarCollapsed} />
+          </div>
 
           <div className="border-t border-line p-3">
             <button
@@ -2171,11 +2465,16 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
                   ))}
                 </div>
               ) : null}
+              {!canCreateOrEdit ? (
+                <p className="rounded-md border border-line bg-sage p-3 text-sm text-slate-700">
+                  Sign in as an admin or editor to generate and save specs.
+                </p>
+              ) : null}
               {error ? <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
               <div className="flex flex-wrap gap-3">
                 <button
                   type="submit"
-                  disabled={isGenerating}
+                  disabled={isGenerating || !canCreateOrEdit}
                   className="focus-ring inline-flex items-center gap-2 rounded-md bg-cobalt px-4 py-2 text-sm font-semibold text-white hover:bg-cobalt/90 disabled:opacity-60"
                 >
                   <Play className="h-4 w-4" />
@@ -2220,7 +2519,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
         ) : null}
 
         {activeTab === "review" ? (
-          <SpecReview spec={spec} setSpec={setSpec} onSave={saveCurrentSpec} saveStatus={saveStatus} />
+          <SpecReview spec={spec} setSpec={setSpec} onSave={saveCurrentSpec} saveStatus={saveStatus} canEdit={canSaveActiveSpec} />
         ) : null}
         {activeTab === "viewer" ? (
           <SpecViewer
@@ -2232,12 +2531,14 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
             onOpenEdit={openSavedSpec}
             onCopyShareLink={copyViewerShareLink}
             shareStatus={shareStatus}
+            canEditActiveSpec={(id) => Boolean(savedSpecs.find((item) => item.id === id)?.canEdit)}
           />
         ) : null}
         {activeTab === "specs" ? (
           <SavedSpecsBrowser savedSpecs={savedSpecs} onOpen={openSavedSpec} onDelete={deleteSpec} />
         ) : null}
         {activeTab === "library" ? <LibraryBrowser library={library} /> : null}
+        {activeTab === "users" && canManageUsers(auth.user) ? <UserRoleAdmin currentUser={auth.user} /> : null}
           </div>
         </section>
       </div>

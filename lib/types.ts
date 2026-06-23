@@ -103,9 +103,29 @@ export const savedSpecSummarySchema = z.object({
   generatedAt: z.string(),
   savedAt: z.string(),
   updatedAt: z.string(),
+  ownerUserId: z.string().optional(),
+  ownerEmail: z.string().optional(),
+  ownerName: z.string().optional(),
+  canEdit: z.boolean().optional(),
+  canDelete: z.boolean().optional(),
 });
 
 export type SavedSpecSummary = z.infer<typeof savedSpecSummarySchema>;
+
+export const userRoleSchema = z.enum(["admin", "editor", "viewer"]);
+
+export type UserRole = z.infer<typeof userRoleSchema>;
+
+export const appUserSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  name: z.string(),
+  role: userRoleSchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type AppUser = z.infer<typeof appUserSchema>;
 
 export type LibraryData = {
   metadata: Record<string, unknown>;

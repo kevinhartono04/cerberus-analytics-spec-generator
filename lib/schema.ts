@@ -10,5 +10,17 @@ export const savedSpecs = pgTable("saved_specs", {
   generatedAt: text("generated_at").notNull(),
   savedAt: text("saved_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+  ownerUserId: text("owner_user_id"),
+  ownerEmail: text("owner_email"),
+  ownerName: text("owner_name"),
   payload: text("payload").notNull(),
+});
+
+export const appUsers = pgTable("app_users", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull(),
+  name: text("name").notNull(),
+  role: text("role").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
 });
