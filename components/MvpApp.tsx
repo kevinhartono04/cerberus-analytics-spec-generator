@@ -5,6 +5,7 @@ import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
+  Copy,
   FileText,
   Link2,
   Library,
@@ -467,12 +468,14 @@ function PayloadDetailsEditor({
   payloadFields,
   onChange,
   onDelete,
+  onDuplicate,
   onAdd,
 }: {
   eventName: string;
   payloadFields: GeneratedPayloadField[];
   onChange: (payloadIndex: number, patch: Partial<GeneratedPayloadField>) => void;
   onDelete: (payloadIndex: number) => void;
+  onDuplicate: (payloadIndex: number) => void;
   onAdd: () => void;
 }) {
   return (
@@ -512,14 +515,24 @@ function PayloadDetailsEditor({
                 className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-2 py-1 font-mono text-sm text-emerald"
               />
             </label>
-            <button
-              type="button"
-              onClick={() => onDelete(payloadIndex)}
-              className="focus-ring mt-5 inline-flex h-9 items-center justify-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-2 text-xs font-semibold text-rose hover:bg-rose/20"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Remove
-            </button>
+            <div className="mt-5 flex flex-wrap gap-2 lg:flex-col">
+              <button
+                type="button"
+                onClick={() => onDuplicate(payloadIndex)}
+                className="focus-ring inline-flex h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-semibold hover:bg-sage"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Duplicate
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(payloadIndex)}
+                className="focus-ring inline-flex h-9 items-center justify-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-2 text-xs font-semibold text-rose hover:bg-rose/20"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Remove
+              </button>
+            </div>
           </div>
         </div>
       ))}
@@ -761,6 +774,29 @@ function SpecReview({
     });
   }
 
+  function duplicateEventPayload(rowIndex: number, payloadIndex: number) {
+    if (!spec) return;
+    const eventRow = spec.generatedEvents[rowIndex];
+    const payloadToDuplicate = eventRow.payloadFields[payloadIndex];
+    if (!payloadToDuplicate) return;
+    const copiedName = `${payloadToDuplicate.canonicalFieldName || payloadToDuplicate.fieldName || "payload"}_copy`;
+    const duplicatedPayload: GeneratedPayloadField = {
+      ...payloadToDuplicate,
+      fieldName: copiedName,
+      canonicalFieldName: copiedName,
+      notes: payloadToDuplicate.notes
+        ? `${payloadToDuplicate.notes} Duplicated during spec review.`
+        : "Duplicated during spec review.",
+    };
+    updateEvent(rowIndex, {
+      payloadFields: [
+        ...eventRow.payloadFields.slice(0, payloadIndex + 1),
+        duplicatedPayload,
+        ...eventRow.payloadFields.slice(payloadIndex + 1),
+      ],
+    });
+  }
+
   function deleteEventPayload(rowIndex: number, payloadIndex: number) {
     if (!spec) return;
     const eventRow = spec.generatedEvents[rowIndex];
@@ -938,6 +974,45 @@ function SpecReview({
                 </label>
 
                 <div>
+                  <div className="mb-3">
+                    <h4 className="font-bold text-ink">Argument Details</h4>
+                    <p className="text-sm text-slate-600">Edit the event argument key, value description, and example values.</p>
+                  </div>
+                  <div className="grid gap-3 rounded-md border border-line bg-mist p-3 lg:grid-cols-[220px_1fr_260px]">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Argument Type</span>
+                      <input
+                        aria-label={`${selectedEvent.eventName} argument type`}
+                        value={selectedEvent.argumentName}
+                        onChange={(event) => updateEvent(selectedEventIndex, { argumentName: event.target.value })}
+                        className="focus-ring h-10 w-full rounded-md border border-line bg-white px-3 font-mono text-sm font-semibold text-cobalt"
+                        placeholder="reason"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Argument Value Description</span>
+                      <textarea
+                        aria-label={`${selectedEvent.eventName} argument value description`}
+                        value={selectedEvent.argumentDescription}
+                        onChange={(event) => updateEvent(selectedEventIndex, { argumentDescription: event.target.value })}
+                        className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-3 py-2 text-sm"
+                        placeholder="<the reason for the game round to end>"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Argument Value Example</span>
+                      <textarea
+                        aria-label={`${selectedEvent.eventName} argument value example`}
+                        value={selectedEvent.argumentExamples}
+                        onChange={(event) => updateEvent(selectedEventIndex, { argumentExamples: event.target.value })}
+                        className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-3 py-2 font-mono text-sm text-emerald"
+                        placeholder='"win", "lose"'
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div>
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
                       <h4 className="font-bold text-ink">Payload Details</h4>
@@ -949,6 +1024,7 @@ function SpecReview({
                     payloadFields={selectedEvent.payloadFields}
                     onChange={(payloadIndex, patch) => updateEventPayload(selectedEventIndex, payloadIndex, patch)}
                     onDelete={(payloadIndex) => deleteEventPayload(selectedEventIndex, payloadIndex)}
+                    onDuplicate={(payloadIndex) => duplicateEventPayload(selectedEventIndex, payloadIndex)}
                     onAdd={() => addEventPayload(selectedEventIndex)}
                   />
                 </div>
@@ -1405,14 +1481,21 @@ function rowsForSpec(spec: GeneratedSpec): SpecViewerRow[] {
 function EventSpecCard({ event }: { event: GeneratedEvent }) {
   const tone = categoryTone(`${event.category} ${event.featurePack} ${event.eventName}`);
   return (
-    <article className={`rounded-md border border-line border-l-2 bg-white shadow-sm ${tone.border}`}>
-      <div className="border-b border-line px-4 py-3">
-        <div className="flex flex-col justify-between gap-2 md:flex-row md:items-start">
-          <div>
-            <h4 className={`font-mono text-base font-bold ${tone.text}`}>{event.eventName}</h4>
-            <p className="text-sm text-slate-600">{event.featurePack}</p>
+    <article className={`overflow-hidden rounded-md border border-line border-l-2 bg-white shadow-sm ${tone.border}`}>
+      <div className="border-b border-line bg-mist/50 px-4 py-4">
+        <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+          <div className="flex min-w-0 gap-3">
+            <div className={`mt-1 h-11 w-1.5 shrink-0 rounded-full ${tone.bar}`} />
+            <div className="min-w-0">
+              <div className="font-mono text-[11px] font-semibold uppercase tracking-wide text-slate-500">Event</div>
+              <h4 className={`mt-1 truncate font-mono text-2xl font-bold leading-tight ${tone.text}`}>{event.eventName}</h4>
+              <p className="mt-1 text-sm font-semibold text-slate-600">{event.featurePack}</p>
+            </div>
           </div>
-          <StatusChip status={event.status} />
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <ToneChip tone={tone}>{event.payloadFields.length} payloads</ToneChip>
+            <StatusChip status={event.status} />
+          </div>
         </div>
         <p className="mt-3 text-sm text-slate-700">{event.trigger || "No trigger description yet."}</p>
       </div>
@@ -1435,6 +1518,10 @@ function EventSpecCard({ event }: { event: GeneratedEvent }) {
       ) : null}
 
       <div className="overflow-x-auto">
+        <div className={`flex items-center justify-between border-b border-line px-3 py-2 ${tone.table}`}>
+          <div className="font-mono text-xs font-semibold uppercase tracking-wide">Payload Fields</div>
+          <div className="font-mono text-[11px] font-semibold">{event.payloadFields.length} rows</div>
+        </div>
         <table className="w-full min-w-[880px] text-left text-[15px]">
           <thead className={`text-xs uppercase ${tone.table}`}>
             <tr>
@@ -1447,7 +1534,7 @@ function EventSpecCard({ event }: { event: GeneratedEvent }) {
           <tbody className="divide-y divide-line">
             {event.payloadFields.map((payload, payloadIndex) => (
               <tr key={`${event.eventName}-${payload.canonicalFieldName}-${payloadIndex}`}>
-                <td className={`px-3 py-3 align-top font-mono font-semibold ${tone.text}`}>{payload.canonicalFieldName}</td>
+                <td className={`px-3 py-3 align-top font-mono text-base font-bold ${tone.text}`}>{payload.canonicalFieldName}</td>
                 <td className="px-3 py-3 align-top text-slate-700">{payload.description}</td>
                 <td className="px-3 py-3 align-top font-mono text-sm text-emerald">{payload.example}</td>
                 <td className="px-3 py-3 align-top"><DataTypePill type={payload.type} /></td>
@@ -1478,16 +1565,24 @@ function PlatformAdEventCard({
 }) {
   const tone = categoryTone(`${adFamily} ad event`);
   return (
-    <article className={`rounded-md border border-line border-l-2 bg-white shadow-sm ${tone.border}`}>
-      <div className="flex flex-col justify-between gap-2 border-b border-line px-4 py-3 md:flex-row md:items-start">
-        <div>
-          <h4 className={`font-mono text-base font-bold ${tone.text}`}>{eventName}</h4>
-          <p className="text-sm text-slate-600">{adFamily} platform ad event</p>
+    <article className={`overflow-hidden rounded-md border border-line border-l-2 bg-white shadow-sm ${tone.border}`}>
+      <div className="flex flex-col justify-between gap-3 border-b border-line bg-mist/50 px-4 py-4 md:flex-row md:items-start">
+        <div className="flex min-w-0 gap-3">
+          <div className={`mt-1 h-11 w-1.5 shrink-0 rounded-full ${tone.bar}`} />
+          <div className="min-w-0">
+            <div className="font-mono text-[11px] font-semibold uppercase tracking-wide text-slate-500">Payload Group</div>
+            <h4 className={`mt-1 truncate font-mono text-2xl font-bold leading-tight ${tone.text}`}>{eventName}</h4>
+            <p className="mt-1 text-sm font-semibold text-slate-600">{adFamily} platform ad event</p>
+          </div>
         </div>
         <ToneChip tone={tone}>{payloads.length} payloads</ToneChip>
       </div>
 
       <div className="overflow-x-auto">
+        <div className={`flex items-center justify-between border-b border-line px-3 py-2 ${tone.table}`}>
+          <div className="font-mono text-xs font-semibold uppercase tracking-wide">Payload Fields</div>
+          <div className="font-mono text-[11px] font-semibold">{payloads.length} rows</div>
+        </div>
         <table className="w-full min-w-[760px] text-left text-[15px]">
           <thead className={`text-xs uppercase ${tone.table}`}>
             <tr>
@@ -1499,7 +1594,7 @@ function PlatformAdEventCard({
           <tbody className="divide-y divide-line">
             {payloads.map((payload, payloadIndex) => (
               <tr key={`${payload.platformEventName}-${payload.canonicalPayloadName}-${payloadIndex}`}>
-                <td className={`px-3 py-3 align-top font-mono font-semibold ${tone.text}`}>{payload.canonicalPayloadName}</td>
+                <td className={`px-3 py-3 align-top font-mono text-base font-bold ${tone.text}`}>{payload.canonicalPayloadName}</td>
                 <td className="px-3 py-3 align-top text-slate-700">{payload.description}</td>
                 <td className="px-3 py-3 align-top font-mono text-sm text-emerald">{payload.example}</td>
               </tr>
@@ -1666,9 +1761,9 @@ function SpecViewer({
                     isActive ? `border-cobalt bg-cobalt text-white shadow-sm` : `border-line bg-white text-slate-700 hover:bg-mist`
                   }`}
                 >
-                  <div className={`mb-2 h-0.5 w-8 rounded ${isActive ? "bg-white/80" : tone.bar}`} />
-                  <div className={`font-mono text-sm font-bold ${isActive ? "text-white" : tone.text}`}>{group.label}</div>
-                  <div className={`mt-1 text-xs ${isActive ? "text-white/80" : "text-slate-500"}`}>
+                  <div className={`mb-2 h-1 w-10 rounded ${isActive ? "bg-white/80" : tone.bar}`} />
+                  <div className={`font-mono text-base font-bold leading-tight ${isActive ? "text-white" : tone.text}`}>{group.label}</div>
+                  <div className={`mt-1 font-mono text-xs ${isActive ? "text-white/80" : "text-slate-500"}`}>
                     {eventCount} events · {payloadCount} payloads
                   </div>
                 </button>
@@ -1682,8 +1777,13 @@ function SpecViewer({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <div className="text-xs font-semibold uppercase text-slate-500">Current Group</div>
-                <h3 className={`mt-1 text-lg font-bold ${categoryTone(activeGroup.label).text}`}>{activeGroup.label}</h3>
-                <p className="text-sm text-slate-600">{activeGroup.description}</p>
+                <div className="mt-1 flex items-center gap-3">
+                  <div className={`h-8 w-1.5 rounded-full ${categoryTone(activeGroup.label).bar}`} />
+                  <h3 className={`font-mono text-2xl font-bold leading-tight ${categoryTone(activeGroup.label).text}`}>
+                    {activeGroup.label}
+                  </h3>
+                </div>
+                <p className="mt-1 text-sm text-slate-600">{activeGroup.description}</p>
               </div>
               <div className="grid grid-cols-2 gap-2 sm:min-w-72">
                 <div className="rounded-md border border-line bg-white px-3 py-2">
