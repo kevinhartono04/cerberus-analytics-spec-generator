@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DELETE, GET as GET_SPEC, PUT } from "@/app/api/specs/[id]/route";
 import { POST as GENERATE_SPEC } from "@/app/api/generate/route";
+import { POST as IMPORT_SPEC } from "@/app/api/specs/import/route";
 import { GET as LIST_SPECS, POST } from "@/app/api/specs/route";
 import { deleteSavedSpec } from "@/lib/db";
 import { generateSpecFromRules } from "@/lib/generator";
@@ -53,6 +54,41 @@ function request(method: string, role: UserRole, userId: string, body?: unknown)
 
 function publicRequest(method = "GET") {
   return new Request("http://localhost/api/specs", { method });
+}
+
+function uploadedFile(name: string, content: string) {
+  return {
+    name,
+    arrayBuffer: async () => {
+      const buffer = Buffer.from(content);
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    },
+  };
+}
+
+function importRequest(
+  role: UserRole,
+  userId: string,
+  file: ReturnType<typeof uploadedFile>,
+  details: { gameTitle?: string; genre?: string } = {},
+) {
+  const headers = new Headers({
+    "x-test-user-id": userId,
+    "x-test-user-email": `${userId}@example.com`,
+    "x-test-user-name": userId,
+    "x-test-user-role": role,
+  });
+  return {
+    headers,
+    formData: async () => ({
+      get: (name: string) => {
+        if (name === "file") return file;
+        if (name === "gameTitle") return details.gameTitle ?? null;
+        if (name === "genre") return details.genre ?? null;
+        return null;
+      },
+    }),
+  } as unknown as Request;
 }
 
 function context(id: string) {
@@ -117,6 +153,47 @@ describe("spec RBAC API", () => {
 
     const generateResponse = await GENERATE_SPEC(request("POST", "viewer", "viewer-user-generate", baseIntake));
     expect(generateResponse.status).toBe(403);
+  });
+
+  it("allows admins and editors to import specs", async () => {
+    const file = uploadedFile(
+      "Imported RBAC Game.csv",
+      [
+        "Event Name,Description,Argument Type,Argument Value,Arg Value Example,Payload Name,Payload Value,Payload Value Example",
+        "Game_Start,Start a round,start_type,Round start type,new,level,Current level,16",
+      ].join("\n"),
+    );
+
+    const response = await IMPORT_SPEC(
+      importRequest("editor", "editor-importer", file, {
+        gameTitle: "Imported RBAC Game",
+        genre: "Puzzle",
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      spec: { intake: { gameTitle: string; genre: string } };
+      summary: { id: string; ownerUserId: string; canEdit: boolean; gameTitle: string; genre: string };
+    };
+    createdSpecIds.add(body.summary.id);
+    expect(body.spec.intake.gameTitle).toBe("Imported RBAC Game");
+    expect(body.spec.intake.genre).toBe("Puzzle");
+    expect(body.summary.gameTitle).toBe("Imported RBAC Game");
+    expect(body.summary.genre).toBe("Puzzle");
+    expect(body.summary.ownerUserId).toBe("editor-importer");
+    expect(body.summary.canEdit).toBe(true);
+  });
+
+  it("blocks viewers and invalid file types from import", async () => {
+    const viewerResponse = await IMPORT_SPEC(
+      importRequest("viewer", "viewer-importer", uploadedFile("viewer.csv", "not a spec")),
+    );
+    expect(viewerResponse.status).toBe(403);
+
+    const invalidResponse = await IMPORT_SPEC(
+      importRequest("admin", "admin-importer", uploadedFile("notes.txt", "not a spec")),
+    );
+    expect(invalidResponse.status).toBe(400);
   });
 
   it("allows public single-spec reads but blocks anonymous list access", async () => {

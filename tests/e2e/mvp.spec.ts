@@ -1,3 +1,4 @@
+import path from "node:path";
 import { expect, Page, test } from "@playwright/test";
 
 async function hasInputValue(page: Page, value: string) {
@@ -104,6 +105,36 @@ test("generates, edits, saves, reopens, and deletes a draft spec", async ({ page
   expect(await hasTextareaValue(page, "edited_payload_example")).toBe(true);
 
   await page.getByRole("button", { name: "Saved Specs" }).click();
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByText("No saved specs yet")).toBeVisible();
+});
+
+test("imports an existing CSV spec from saved specs", async ({ page }) => {
+  const existingSpecs = await page.request.get("/api/specs");
+  for (const savedSpec of await existingSpecs.json()) {
+    await page.request.delete(`/api/specs/${savedSpec.id}`);
+  }
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Saved Specs" }).click();
+  await page.locator('input[type="file"]').setInputFiles(path.join(process.cwd(), "tests/fixtures/import-spec.csv"));
+  await expect(page.getByRole("heading", { name: "Import Spec Details" })).toBeVisible();
+  await page.getByLabel("Game Name").fill("Imported Fixture Game");
+  await page.getByLabel("Genre").pressSequentially("Puzzle CSV");
+  await expect(page.getByLabel("Genre")).toHaveValue("Puzzle CSV");
+  await page.getByLabel("Genre").fill("");
+  await page.getByRole("button", { name: "Save Imported Spec" }).click();
+
+  await expect(page.getByText("Imported Imported Fixture Game")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Imported Fixture Game" })).toBeVisible();
+  expect(await hasInputValue(page, "Game_Start")).toBe(true);
+
+  await page.getByRole("button", { name: "Saved Specs" }).click();
+  await expect(page.getByText("Saved Game Specs")).toBeVisible();
+  await expect(page.getByText("Imported Fixture Game", { exact: true })).toBeVisible();
+  await expect(page.getByText("Unspecified", { exact: true })).toBeVisible();
+
   page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Delete" }).click();
   await expect(page.getByText("No saved specs yet")).toBeVisible();

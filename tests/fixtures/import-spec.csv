@@ -1,0 +1,3 @@
+Event Name,Description,Argument Type,Argument Value,Arg Value Example,Payload Name,Payload Value,Payload Value Example
+Game_Start,Start imported fixture round,start_type,Round start type,"new",level,Current level,16
+,,,,,game_round_id,Round id,fixture-round-1

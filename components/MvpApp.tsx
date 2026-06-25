@@ -19,8 +19,10 @@ import {
   Sparkles,
   Table2,
   Trash2,
+  Upload,
   UserCog,
   Wand2,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -1316,34 +1318,208 @@ function SpecReview({
   );
 }
 
+function ImportDetailsDialog({
+  file,
+  gameTitle,
+  genre,
+  isImporting,
+  onGameTitleChange,
+  onGenreChange,
+  onCancel,
+  onSubmit,
+}: {
+  file: File | null;
+  gameTitle: string;
+  genre: string;
+  isImporting: boolean;
+  onGameTitleChange: (value: string) => void;
+  onGenreChange: (value: string) => void;
+  onCancel: () => void;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+}) {
+  if (!file) return null;
+  const canSubmit = Boolean(gameTitle.trim()) && !isImporting;
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-4">
+      <form onSubmit={onSubmit} className="w-full max-w-md rounded-md border border-line bg-white p-5 shadow-soft">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold text-ink">Import Spec Details</h3>
+            <p className="mt-1 text-sm text-slate-600">{file.name}</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Cancel import"
+            disabled={isImporting}
+            onClick={onCancel}
+            className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-md border border-line bg-mist text-slate-500 hover:bg-sage disabled:opacity-50"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-4">
+          <label className="block">
+            <span className="mb-2 block text-sm font-semibold text-ink">Game Name</span>
+            <input
+              value={gameTitle}
+              onChange={(event) => onGameTitleChange(event.target.value)}
+              className="focus-ring h-11 w-full rounded-md border border-line bg-white px-3 text-sm shadow-sm"
+              required
+              autoFocus
+            />
+          </label>
+          <label className="block">
+            <span className="mb-2 block text-sm font-semibold text-ink">Genre</span>
+            <input
+              value={genre}
+              onChange={(event) => onGenreChange(event.target.value)}
+              placeholder="Optional"
+              className="focus-ring h-11 w-full rounded-md border border-line bg-white px-3 text-sm shadow-sm"
+            />
+          </label>
+        </div>
+
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            disabled={isImporting}
+            onClick={onCancel}
+            className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50"
+          >
+            <X className="h-4 w-4" />
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="focus-ring inline-flex h-10 items-center gap-2 rounded-md bg-cobalt px-3 text-sm font-semibold text-white hover:bg-cobalt/90 disabled:opacity-50"
+          >
+            <Upload className="h-4 w-4" />
+            {isImporting ? "Importing..." : "Save Imported Spec"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function SavedSpecsBrowser({
   savedSpecs,
   onOpen,
   onDelete,
+  onImport,
+  canImport,
+  importStatus,
+  isImporting,
 }: {
   savedSpecs: SavedSpecSummary[];
   onOpen: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onImport: (file: File, details: { gameTitle: string; genre: string }) => Promise<void>;
+  canImport: boolean;
+  importStatus: string;
+  isImporting: boolean;
 }) {
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
+  const [importGameTitle, setImportGameTitle] = useState("");
+  const [importGenre, setImportGenre] = useState("");
+
+  function titleFromFile(file: File) {
+    return file.name.replace(/\.(xlsx|csv)$/i, "").trim();
+  }
+
+  function stageImport(file: File) {
+    setPendingImportFile(file);
+    setImportGameTitle(titleFromFile(file));
+    setImportGenre("");
+  }
+
+  function closeImportDetails() {
+    if (isImporting) return;
+    setPendingImportFile(null);
+    setImportGameTitle("");
+    setImportGenre("");
+  }
+
+  async function submitImportDetails(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!pendingImportFile || !importGameTitle.trim()) return;
+    await onImport(pendingImportFile, {
+      gameTitle: importGameTitle.trim(),
+      genre: importGenre.trim(),
+    });
+    closeImportDetails();
+  }
+
+  function ImportControl() {
+    if (!canImport) return null;
+    return (
+      <label className="focus-ring inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold hover:bg-slate-50">
+        <Upload className="h-4 w-4" />
+        {isImporting ? "Importing..." : "Import Spec"}
+        <input
+          type="file"
+          accept=".xlsx,.csv"
+          disabled={isImporting}
+          className="sr-only"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) stageImport(file);
+          }}
+        />
+      </label>
+    );
+  }
+
   if (!savedSpecs.length) {
     return (
       <section className="rounded-md border border-dashed border-line bg-white p-10 text-center shadow-sm">
+        <ImportDetailsDialog
+          file={pendingImportFile}
+          gameTitle={importGameTitle}
+          genre={importGenre}
+          isImporting={isImporting}
+          onGameTitleChange={setImportGameTitle}
+          onGenreChange={setImportGenre}
+          onCancel={closeImportDetails}
+          onSubmit={submitImportDetails}
+        />
         <FileText className="mx-auto h-8 w-8 text-cobalt" />
         <h2 className="mt-4 text-xl font-bold text-ink">No saved specs yet</h2>
-        <p className="mt-2 text-sm text-slate-600">Generate a draft, review it, then save it here as a game spec page.</p>
+        <p className="mt-2 text-sm text-slate-600">Generate a draft or import an existing analytics spec.</p>
+        <div className="mt-5 flex justify-center">
+          <ImportControl />
+        </div>
+        {importStatus ? <p className="mt-3 text-sm font-semibold text-cobalt">{importStatus}</p> : null}
       </section>
     );
   }
 
   return (
     <section className="space-y-4">
+      <ImportDetailsDialog
+        file={pendingImportFile}
+        gameTitle={importGameTitle}
+        genre={importGenre}
+        isImporting={isImporting}
+        onGameTitleChange={setImportGameTitle}
+        onGenreChange={setImportGenre}
+        onCancel={closeImportDetails}
+        onSubmit={submitImportDetails}
+      />
       <div className="flex flex-col justify-between gap-2 md:flex-row md:items-end">
         <div>
           <h2 className="text-xl font-bold text-ink">Saved Game Specs</h2>
           <p className="text-sm text-slate-600">Open saved specs with access based on your role.</p>
         </div>
-        <Metric label="Saved Specs" value={savedSpecs.length} />
+        <div className="flex flex-wrap items-end gap-3">
+          <ImportControl />
+          <Metric label="Saved Specs" value={savedSpecs.length} />
+        </div>
       </div>
+      {importStatus ? <p className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-cobalt">{importStatus}</p> : null}
 
       <div className="overflow-hidden rounded-md border border-line bg-white shadow-sm">
         <table className="w-full min-w-[980px] text-left text-sm">
@@ -2088,8 +2264,10 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
   const [viewerActiveSpecId, setViewerActiveSpecId] = useState("");
   const [isViewerLoading, setIsViewerLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
+  const [importStatus, setImportStatus] = useState("");
   const [shareStatus, setShareStatus] = useState("");
   const [auth, setAuth] = useState<AuthState>({ authenticated: false, user: null });
 
@@ -2300,6 +2478,41 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
     } catch (err) {
       setSaveStatus("");
       setError(err instanceof Error ? err.message : "Could not save spec");
+    }
+  }
+
+  async function importSpecFile(file: File, details: { gameTitle: string; genre: string }) {
+    if (!canCreateOrEdit) {
+      setError("Only admins and editors can import specs.");
+      return;
+    }
+    setError("");
+    setSaveStatus("");
+    setImportStatus("Importing...");
+    setIsImporting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("gameTitle", details.gameTitle);
+      formData.append("genre", details.genre);
+      const response = await fetch("/api/specs/import", {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const result = (await response.json()) as { spec: GeneratedSpec; summary: SavedSpecSummary };
+      setSpec(result.spec);
+      form.reset(result.spec.intake);
+      await refreshSavedSpecs();
+      setSaveStatus(`Imported ${result.summary.gameTitle}`);
+      setImportStatus(`Imported ${result.summary.gameTitle}`);
+      setActiveTab("review");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not import spec";
+      setImportStatus(message);
+      setError(message);
+    } finally {
+      setIsImporting(false);
     }
   }
 
@@ -2535,7 +2748,15 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
           />
         ) : null}
         {activeTab === "specs" ? (
-          <SavedSpecsBrowser savedSpecs={savedSpecs} onOpen={openSavedSpec} onDelete={deleteSpec} />
+          <SavedSpecsBrowser
+            savedSpecs={savedSpecs}
+            onOpen={openSavedSpec}
+            onDelete={deleteSpec}
+            onImport={importSpecFile}
+            canImport={canCreateOrEdit}
+            importStatus={importStatus}
+            isImporting={isImporting}
+          />
         ) : null}
         {activeTab === "library" ? <LibraryBrowser library={library} /> : null}
         {activeTab === "users" && canManageUsers(auth.user) ? <UserRoleAdmin currentUser={auth.user} /> : null}
