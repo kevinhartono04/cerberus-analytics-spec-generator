@@ -513,13 +513,22 @@ function inferDataTypeFromExample(example: string): PayloadDataType | null {
   return null;
 }
 
+function canonicalPayloadDataType(value: string): PayloadDataType | null {
+  const normalized = value.trim().toLowerCase();
+  return payloadDataTypeOptions.find((option) => option.toLowerCase() === normalized) ?? null;
+}
+
 function normalizePayloadDataType(
   payload: Pick<GeneratedPayloadField, "type" | "fieldName" | "canonicalFieldName" | "description" | "example">,
+  options: { inferFromExample?: boolean } = {},
 ): PayloadDataType {
+  const raw = payload.type.trim().toLowerCase();
+  const canonicalType = canonicalPayloadDataType(payload.type);
+  if (canonicalType && (!options.inferFromExample || canonicalType !== "String")) return canonicalType;
+
   if (isIdLikePayload(payload)) return "String";
 
   const inferred = inferDataTypeFromExample(payload.example);
-  const raw = payload.type.trim().toLowerCase();
 
   if (raw.includes("array") || raw.includes("list")) return "Array";
   if (raw.includes("bool")) return "Bool";
@@ -532,14 +541,14 @@ function normalizePayloadDataType(
   return inferred ?? "String";
 }
 
-function normalizeSpecPayloadTypes(spec: GeneratedSpec): GeneratedSpec {
+function normalizeSpecPayloadTypes(spec: GeneratedSpec, options: { inferFromExample?: boolean } = {}): GeneratedSpec {
   return {
     ...spec,
     generatedEvents: spec.generatedEvents.map((event) => ({
       ...event,
       payloadFields: event.payloadFields.map((payload) => ({
         ...payload,
-        type: normalizePayloadDataType(payload),
+        type: normalizePayloadDataType(payload, options),
       })),
     })),
   };
@@ -691,7 +700,7 @@ function PayloadDetailsEditor({
               <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Type</span>
               <select
                 aria-label={`${eventName} ${payload.canonicalFieldName} data type`}
-                value={normalizePayloadDataType(payload)}
+                value={canonicalPayloadDataType(payload.type) ?? normalizePayloadDataType(payload, { inferFromExample: true })}
                 disabled={!canEdit}
                 onChange={(event) => onChange(payloadIndex, { type: event.target.value })}
                 className="focus-ring h-9 w-full rounded-full border border-line bg-white px-2 font-mono text-[11px] font-semibold text-cyan disabled:opacity-60"
@@ -2568,7 +2577,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
       if (targetSpecId && !auth.authenticated) {
         const specResponse = await fetch(`/api/specs/${targetSpecId}`);
         if (!specResponse.ok) throw new Error(await specResponse.text());
-        const publicSpec = normalizeSpecPayloadTypes((await specResponse.json()) as GeneratedSpec);
+        const publicSpec = normalizeSpecPayloadTypes((await specResponse.json()) as GeneratedSpec, { inferFromExample: true });
         setViewerSpecs([publicSpec]);
         setSavedSpecs([summaryFromSpec(publicSpec)]);
         setViewerActiveSpecId(publicSpec.id);
@@ -2583,7 +2592,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
         summaries.map(async (summary) => {
           const specResponse = await fetch(`/api/specs/${summary.id}`);
           if (!specResponse.ok) throw new Error(await specResponse.text());
-          return normalizeSpecPayloadTypes((await specResponse.json()) as GeneratedSpec);
+          return normalizeSpecPayloadTypes((await specResponse.json()) as GeneratedSpec, { inferFromExample: true });
         }),
       );
       setViewerSpecs(fullSpecs);
@@ -2671,7 +2680,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
         body: JSON.stringify(values),
       });
       if (!response.ok) throw new Error(await response.text());
-      const generated = normalizeSpecPayloadTypes((await response.json()) as GeneratedSpec);
+      const generated = normalizeSpecPayloadTypes((await response.json()) as GeneratedSpec, { inferFromExample: true });
       setSpec(generated);
       setActiveTab("review");
       await refreshSavedSpecs();
@@ -2727,7 +2736,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
       });
       if (!response.ok) throw new Error(await response.text());
       const result = (await response.json()) as { spec: GeneratedSpec; summary: SavedSpecSummary };
-      const importedSpec = normalizeSpecPayloadTypes(result.spec);
+      const importedSpec = normalizeSpecPayloadTypes(result.spec, { inferFromExample: true });
       setSpec(importedSpec);
       form.reset(importedSpec.intake);
       await refreshSavedSpecs();
@@ -2756,7 +2765,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
       setError(await response.text());
       return;
     }
-    const savedSpec = normalizeSpecPayloadTypes((await response.json()) as GeneratedSpec);
+    const savedSpec = normalizeSpecPayloadTypes((await response.json()) as GeneratedSpec, { inferFromExample: true });
     setSpec(savedSpec);
     form.reset(savedSpec.intake);
     setSaveStatus("Saved spec loaded");
