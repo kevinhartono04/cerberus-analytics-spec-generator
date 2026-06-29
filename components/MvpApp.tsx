@@ -6,11 +6,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Eye,
   FileText,
   Link2,
   Library,
   LogIn,
   LogOut,
+  Pencil,
   Play,
   Plus,
   Save,
@@ -45,7 +47,7 @@ type Tab = "intake" | "review" | "viewer" | "specs" | "library" | "users";
 
 const navigationItems: Array<{ tab: Tab; label: string; icon: LucideIcon }> = [
   { tab: "intake", label: "Intake", icon: Wand2 },
-  { tab: "review", label: "Review", icon: Sparkles },
+  { tab: "review", label: "Editor", icon: Sparkles },
   { tab: "viewer", label: "Spec Viewer", icon: Table2 },
   { tab: "specs", label: "Saved Specs", icon: FileText },
   { tab: "library", label: "Library", icon: Library },
@@ -136,6 +138,49 @@ const intakeOptionGroups: Array<{
 
 const rewardedAdPlacementOptions = ["2x_rewards", "daily_reward", "ad_reward", "powerup"];
 const interstitialAdPlacementOptions = ["game_end", "session_resume", "mid_game"];
+const payloadDataTypeOptions = ["String", "Integer", "Float", "Bool", "Array"];
+type PayloadDataType = (typeof payloadDataTypeOptions)[number];
+
+const eventGroupOptions = [
+  {
+    id: "gameplay",
+    label: "Core Gameplay",
+    category: "Gameplay",
+    featurePack: "Core Gameplay",
+  },
+  {
+    id: "economy",
+    label: "Economy",
+    category: "Economy",
+    featurePack: "Economy",
+  },
+  {
+    id: "iap",
+    label: "IAP",
+    category: "IAP",
+    featurePack: "IAP",
+  },
+  {
+    id: "iaa",
+    label: "IAA",
+    category: "IAA",
+    featurePack: "Platform Ad Payload Enrichment",
+  },
+  {
+    id: "liveOps",
+    label: "Live Ops",
+    category: "Live Ops",
+    featurePack: "Live Ops",
+  },
+  {
+    id: "custom",
+    label: "Custom",
+    category: "Custom",
+    featurePack: "Custom Review Additions",
+  },
+] as const;
+
+type EventGroupId = (typeof eventGroupOptions)[number]["id"];
 
 const roleLabels: Record<UserRole, string> = {
   admin: "Admin",
@@ -401,7 +446,8 @@ function ToneChip({ children, tone }: { children: React.ReactNode; tone: ReturnT
 }
 
 function DataTypePill({ type }: { type: string }) {
-  const lower = type.toLowerCase();
+  const normalizedType = normalizePayloadDataType({ type, fieldName: "", canonicalFieldName: "", description: "", example: "" });
+  const lower = normalizedType.toLowerCase();
   const tone = lower.includes("int") || lower.includes("number") || lower.includes("float")
     ? "border-amber/30 bg-amber/10 text-amber"
     : lower.includes("bool")
@@ -412,7 +458,7 @@ function DataTypePill({ type }: { type: string }) {
 
   return (
     <span className={`tone-chip inline-flex w-fit items-center rounded-full border px-2.5 py-1 font-mono text-[11px] font-semibold ${tone}`}>
-      {type || "-"}
+      {normalizedType || "-"}
     </span>
   );
 }
@@ -440,11 +486,101 @@ function payloadFieldFromName(name: string): GeneratedPayloadField {
   };
 }
 
-function newCustomEvent(index: number): GeneratedEvent {
+function isIdLikePayload(payload: Pick<GeneratedPayloadField, "fieldName" | "canonicalFieldName" | "description">) {
+  const name = `${payload.canonicalFieldName || payload.fieldName}`.toLowerCase();
+  const description = payload.description.toLowerCase();
+  return (
+    name === "id" ||
+    name.endsWith("_id") ||
+    name.includes("_id_") ||
+    /(user|player|game|round|bank|set|level|session|product|order|transaction|placement|ad)id$/.test(name) ||
+    /\bid\b/.test(description) ||
+    /\bidentifier\b/.test(description)
+  );
+}
+
+function unquoteExample(example: string) {
+  return example.trim().replace(/^["']|["']$/g, "");
+}
+
+function inferDataTypeFromExample(example: string): PayloadDataType | null {
+  const trimmed = unquoteExample(example);
+  if (!trimmed) return null;
+  if (/^\[.*\]$/.test(trimmed)) return "Array";
+  if (/^(true|false)$/i.test(trimmed)) return "Bool";
+  if (/^-?\d+(\.0+)?$/.test(trimmed)) return "Integer";
+  if (/^-?\d*\.\d+$/.test(trimmed) || /^-?\d+e[+-]?\d+$/i.test(trimmed)) return "Float";
+  return null;
+}
+
+function normalizePayloadDataType(
+  payload: Pick<GeneratedPayloadField, "type" | "fieldName" | "canonicalFieldName" | "description" | "example">,
+): PayloadDataType {
+  if (isIdLikePayload(payload)) return "String";
+
+  const inferred = inferDataTypeFromExample(payload.example);
+  const raw = payload.type.trim().toLowerCase();
+
+  if (raw.includes("array") || raw.includes("list")) return "Array";
+  if (raw.includes("bool")) return "Bool";
+  if (raw.includes("float") || raw.includes("double") || raw.includes("decimal")) return "Float";
+  if (raw.includes("int")) return "Integer";
+  if (raw.includes("number") || raw.includes("numeric")) return inferred === "Float" ? "Float" : "Integer";
+  if (inferred && (raw === "" || raw === "string" || raw === "text")) return inferred;
+  if (raw.includes("string") || raw.includes("text") || raw.includes("id")) return "String";
+
+  return inferred ?? "String";
+}
+
+function normalizeSpecPayloadTypes(spec: GeneratedSpec): GeneratedSpec {
+  return {
+    ...spec,
+    generatedEvents: spec.generatedEvents.map((event) => ({
+      ...event,
+      payloadFields: event.payloadFields.map((payload) => ({
+        ...payload,
+        type: normalizePayloadDataType(payload),
+      })),
+    })),
+  };
+}
+
+function eventGroupForId(groupId: EventGroupId) {
+  return eventGroupOptions.find((group) => group.id === groupId) ?? eventGroupOptions[eventGroupOptions.length - 1];
+}
+
+function eventGroupIdForEvent(event: Pick<GeneratedEvent, "eventName" | "category" | "featurePack">): EventGroupId {
+  const value = `${event.category} ${event.featurePack} ${event.eventName}`.toLowerCase();
+  if (value.includes("economy") || value.includes("currency") || value.includes("transaction")) return "economy";
+  if (value.includes("iap") || value.includes("store") || value.includes("purchase")) return "iap";
+  if (value.includes("iaa") || value.includes("ad") || value.includes("rewarded") || value.includes("interstitial")) return "iaa";
+  if (value.includes("live") || value.includes("mission") || event.eventName.startsWith("Event_")) return "liveOps";
+  if (value.includes("gameplay") || value.includes("core") || event.eventName === "Game_Start" || event.eventName === "Game_End") return "gameplay";
+  return "custom";
+}
+
+function eventGroupPatch(groupId: EventGroupId): Pick<GeneratedEvent, "category" | "featurePack"> {
+  const group = eventGroupForId(groupId);
+  return {
+    category: group.category,
+    featurePack: group.featurePack,
+  };
+}
+
+function uniqueEventName(events: GeneratedEvent[], baseName: string) {
+  const existingNames = new Set(events.map((event) => event.eventName));
+  if (!existingNames.has(baseName)) return baseName;
+  let suffix = 2;
+  while (existingNames.has(`${baseName}_${suffix}`)) suffix += 1;
+  return `${baseName}_${suffix}`;
+}
+
+function newCustomEvent(index: number, groupId: EventGroupId): GeneratedEvent {
+  const group = eventGroupForId(groupId);
   return {
     eventName: `Custom_Event_${index}`,
-    category: "Custom",
-    featurePack: "Custom Review Additions",
+    category: group.category,
+    featurePack: group.featurePack,
     trigger: "",
     argumentName: "",
     argumentDescription: "",
@@ -535,7 +671,7 @@ function PayloadDetailsEditor({
     <div className="space-y-3">
       {payloadFields.map((payload, payloadIndex) => (
         <div key={`payload-${payloadIndex}`} className="rounded-md border border-line bg-mist p-3">
-          <div className="grid gap-3 lg:grid-cols-[180px_1fr_180px_auto]">
+          <div className="grid gap-3 lg:grid-cols-[180px_104px_minmax(280px,1fr)_180px_76px]">
             <label className="block">
               <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Payload</span>
               <input
@@ -550,6 +686,22 @@ function PayloadDetailsEditor({
                 }
                 className="focus-ring h-9 w-full rounded-md border border-line bg-white px-2 font-mono text-sm font-semibold text-cobalt"
               />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Type</span>
+              <select
+                aria-label={`${eventName} ${payload.canonicalFieldName} data type`}
+                value={normalizePayloadDataType(payload)}
+                disabled={!canEdit}
+                onChange={(event) => onChange(payloadIndex, { type: event.target.value })}
+                className="focus-ring h-9 w-full rounded-full border border-line bg-white px-2 font-mono text-[11px] font-semibold text-cyan disabled:opacity-60"
+              >
+                {payloadDataTypeOptions.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Description</span>
@@ -571,24 +723,26 @@ function PayloadDetailsEditor({
                 className="focus-ring min-h-20 w-full rounded-md border border-line bg-white px-2 py-1 font-mono text-sm text-emerald"
               />
             </label>
-            <div className="mt-5 flex flex-wrap gap-2 lg:flex-col">
+            <div className="mt-5 flex gap-1.5">
               <button
                 type="button"
+                title="Duplicate payload"
+                aria-label={`${eventName} duplicate ${payload.canonicalFieldName}`}
                 disabled={!canEdit}
                 onClick={() => onDuplicate(payloadIndex)}
-                className="focus-ring inline-flex h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-semibold hover:bg-sage disabled:opacity-50"
+                className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-md border border-line bg-white text-slate-500 hover:bg-sage hover:text-ink disabled:opacity-50"
               >
                 <Copy className="h-3.5 w-3.5" />
-                Duplicate
               </button>
               <button
                 type="button"
+                title="Remove payload"
+                aria-label={`${eventName} remove ${payload.canonicalFieldName}`}
                 disabled={!canEdit}
                 onClick={() => onDelete(payloadIndex)}
-                className="focus-ring inline-flex h-9 items-center justify-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-2 text-xs font-semibold text-rose hover:bg-rose/20 disabled:opacity-50"
+                className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-md border border-rose/40 bg-rose/10 text-rose hover:bg-rose/20 disabled:opacity-50"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                Remove
               </button>
             </div>
           </div>
@@ -849,12 +1003,36 @@ function SpecReview({
 
   function addCustomEvent() {
     if (!spec) return;
-    const nextEvent = newCustomEvent(spec.generatedEvents.length + 1);
+    const nextEvent = newCustomEvent(spec.generatedEvents.length + 1, "custom");
     setSpec({
       ...spec,
       generatedEvents: [...spec.generatedEvents, nextEvent],
     });
     setSelectedEventIndex(spec.generatedEvents.length);
+  }
+
+  function duplicateEvent(rowIndex: number) {
+    if (!spec) return;
+    const eventToDuplicate = spec.generatedEvents[rowIndex];
+    if (!eventToDuplicate) return;
+    const copiedName = uniqueEventName(spec.generatedEvents, `${eventToDuplicate.eventName}_copy`);
+    const duplicatedEvent: GeneratedEvent = {
+      ...eventToDuplicate,
+      eventName: copiedName,
+      payloadFields: eventToDuplicate.payloadFields.map((payload) => ({ ...payload })),
+      sourceReferences: [...eventToDuplicate.sourceReferences],
+      generationReason: eventToDuplicate.generationReason
+        ? `${eventToDuplicate.generationReason} Duplicated during spec review.`
+        : "Duplicated during spec review.",
+      status: "Draft",
+    };
+    const nextEvents = [
+      ...spec.generatedEvents.slice(0, rowIndex + 1),
+      duplicatedEvent,
+      ...spec.generatedEvents.slice(rowIndex + 1),
+    ];
+    setSpec({ ...spec, generatedEvents: nextEvents });
+    setSelectedEventIndex(rowIndex + 1);
   }
 
   function deleteEvent(rowIndex: number) {
@@ -953,7 +1131,7 @@ function SpecReview({
           <p className="text-sm text-slate-600">Generated {new Date(spec.generatedAt).toLocaleString()}</p>
           {saveStatus ? <p className="mt-1 text-xs font-semibold text-cobalt">{saveStatus}</p> : null}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             disabled={!canEdit}
@@ -1040,18 +1218,29 @@ function SpecReview({
                       <span className="text-sm text-slate-600">{selectedEvent.featurePack}</span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    disabled={!canEdit}
-                    onClick={() => deleteEvent(selectedEventIndex)}
-                    className="focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-rose/40 bg-rose/10 px-3 py-2 text-sm font-semibold text-rose hover:bg-rose/20 disabled:opacity-50"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Delete Event
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={!canEdit}
+                      onClick={() => duplicateEvent(selectedEventIndex)}
+                      className="focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold hover:bg-sage disabled:opacity-50"
+                    >
+                      <Copy className="h-4 w-4" />
+                      Duplicate Event
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canEdit}
+                      onClick={() => deleteEvent(selectedEventIndex)}
+                      className="focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-rose/40 bg-rose/10 px-3 py-2 text-sm font-semibold text-rose hover:bg-rose/20 disabled:opacity-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete Event
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-[1fr_220px]">
+                <div className="grid gap-4 md:grid-cols-[1fr_220px_220px]">
                   <label className="block">
                     <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Event Name</span>
                     <input
@@ -1060,6 +1249,21 @@ function SpecReview({
                       onChange={(event) => updateEvent(selectedEventIndex, { eventName: event.target.value })}
                       className="focus-ring h-11 w-full rounded-md border border-line px-3 text-sm font-semibold"
                     />
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Grouping</span>
+                    <select
+                      value={eventGroupIdForEvent(selectedEvent)}
+                      disabled={!canEdit}
+                      onChange={(event) => updateEvent(selectedEventIndex, eventGroupPatch(event.target.value as EventGroupId))}
+                      className="focus-ring h-11 w-full rounded-md border border-line bg-white px-3 text-sm font-semibold"
+                    >
+                      {eventGroupOptions.map((group) => (
+                        <option key={group.id} value={group.id}>
+                          {group.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                   <label className="block">
                     <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Status</span>
@@ -1407,6 +1611,7 @@ function ImportDetailsDialog({
 function SavedSpecsBrowser({
   savedSpecs,
   onOpen,
+  onEdit,
   onDelete,
   onImport,
   canImport,
@@ -1415,6 +1620,7 @@ function SavedSpecsBrowser({
 }: {
   savedSpecs: SavedSpecSummary[];
   onOpen: (id: string) => Promise<void>;
+  onEdit: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onImport: (file: File, details: { gameTitle: string; genre: string }) => Promise<void>;
   canImport: boolean;
@@ -1522,7 +1728,7 @@ function SavedSpecsBrowser({
       {importStatus ? <p className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-cobalt">{importStatus}</p> : null}
 
       <div className="overflow-hidden rounded-md border border-line bg-white shadow-sm">
-        <table className="w-full min-w-[980px] text-left text-sm">
+        <table className="w-full min-w-[1040px] text-left text-sm">
           <thead className="bg-sage text-xs uppercase text-slate-600">
             <tr>
               <th className="px-3 py-2">Game</th>
@@ -1554,25 +1760,41 @@ function SavedSpecsBrowser({
                 <td className="px-3 py-3">{savedSpec.payloadCount}</td>
                 <td className="px-3 py-3">{new Date(savedSpec.updatedAt).toLocaleString()}</td>
                 <td className="px-3 py-3">
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                     <button
                       type="button"
+                      title="Open in Spec Viewer"
+                      aria-label={`Open ${savedSpec.gameTitle} in Spec Viewer`}
                       onClick={() => onOpen(savedSpec.id)}
-                      className="focus-ring inline-flex items-center gap-1 rounded-md bg-cobalt px-3 py-2 text-xs font-semibold text-white hover:bg-cobalt/90"
+                      className="focus-ring inline-flex h-9 items-center gap-1 rounded-md bg-cobalt px-2.5 text-xs font-semibold text-white hover:bg-cobalt/90"
                     >
-                      <FileText className="h-3.5 w-3.5" />
-                      Open
+                      <Eye className="h-3.5 w-3.5" />
+                      <span className="hidden xl:inline">Open</span>
                     </button>
+                    {savedSpec.canEdit ? (
+                      <button
+                        type="button"
+                        title="Edit in Editor"
+                        aria-label={`Edit ${savedSpec.gameTitle} in Editor`}
+                        onClick={() => onEdit(savedSpec.id)}
+                        className="focus-ring inline-flex h-9 items-center gap-1 rounded-md border border-line bg-white px-2.5 text-xs font-semibold hover:bg-sage"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        <span className="hidden xl:inline">Edit</span>
+                      </button>
+                    ) : null}
                     {savedSpec.canDelete ? (
                       <button
                         type="button"
+                        title="Delete saved spec"
+                        aria-label={`Delete ${savedSpec.gameTitle}`}
                         onClick={() => {
                           if (window.confirm(`Delete ${savedSpec.gameTitle}?`)) void onDelete(savedSpec.id);
                         }}
-                        className="focus-ring inline-flex items-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-3 py-2 text-xs font-semibold text-rose hover:bg-rose/20"
+                        className="focus-ring inline-flex h-9 items-center gap-1 rounded-md border border-rose/40 bg-rose/10 px-2.5 text-xs font-semibold text-rose hover:bg-rose/20"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                        Delete
+                        <span className="hidden xl:inline">Delete</span>
                       </button>
                     ) : null}
                   </div>
@@ -1723,7 +1945,7 @@ type SpecViewerGroup = {
 const specViewerGroupMeta: Array<Pick<SpecViewerGroup, "id" | "label" | "description">> = [
   {
     id: "gameplay",
-    label: "Gameplay",
+    label: "Core Gameplay",
     description: "Core round lifecycle specs: Game_Start and Game_End.",
   },
   {
@@ -1753,7 +1975,10 @@ const specViewerGroupMeta: Array<Pick<SpecViewerGroup, "id" | "label" | "descrip
   },
 ];
 
-function groupIdForEventName(eventName: string): SpecViewerGroupId {
+function groupIdForEvent(event: GeneratedEvent): SpecViewerGroupId {
+  const groupId = eventGroupIdForEvent(event);
+  if (groupId !== "custom") return groupId;
+  const eventName = event.eventName;
   if (eventName === "Game_Start" || eventName === "Game_End") return "gameplay";
   if (eventName === "Currency_Transaction" || eventName === "Item_Transaction") return "economy";
   if (eventName === "Store_Open" || eventName.startsWith("Store_Product_Purchase_")) return "iap";
@@ -1776,7 +2001,7 @@ function specViewerGroupsFor(spec: GeneratedSpec): SpecViewerGroup[] {
   );
 
   spec.generatedEvents.forEach((event) => {
-    groups.get(groupIdForEventName(event.eventName))?.events.push(event);
+    groups.get(groupIdForEvent(event))?.events.push(event);
   });
 
   spec.platformAdPayloads.forEach((payload) => {
@@ -2087,6 +2312,7 @@ function SpecViewer({
   }
 
   const activeSummary = savedSpecs.find((item) => item.id === activeSpec.id);
+  const canEditSpec = canEditActiveSpec(activeSpec.id);
 
   return (
     <section className="space-y-4">
@@ -2112,14 +2338,14 @@ function SpecViewer({
               <Link2 className="h-4 w-4" />
               Copy Link
             </button>
-            {canEditActiveSpec(activeSpec.id) ? (
+            {canEditSpec ? (
               <button
                 type="button"
                 onClick={() => onOpenEdit(activeSpec.id)}
                 className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
               >
-                <FileText className="h-4 w-4" />
-                Edit Spec
+                <Pencil className="h-4 w-4" />
+                Edit in Editor
               </button>
             ) : null}
           </div>
@@ -2342,7 +2568,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
       if (targetSpecId && !auth.authenticated) {
         const specResponse = await fetch(`/api/specs/${targetSpecId}`);
         if (!specResponse.ok) throw new Error(await specResponse.text());
-        const publicSpec = (await specResponse.json()) as GeneratedSpec;
+        const publicSpec = normalizeSpecPayloadTypes((await specResponse.json()) as GeneratedSpec);
         setViewerSpecs([publicSpec]);
         setSavedSpecs([summaryFromSpec(publicSpec)]);
         setViewerActiveSpecId(publicSpec.id);
@@ -2357,7 +2583,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
         summaries.map(async (summary) => {
           const specResponse = await fetch(`/api/specs/${summary.id}`);
           if (!specResponse.ok) throw new Error(await specResponse.text());
-          return (await specResponse.json()) as GeneratedSpec;
+          return normalizeSpecPayloadTypes((await specResponse.json()) as GeneratedSpec);
         }),
       );
       setViewerSpecs(fullSpecs);
@@ -2445,7 +2671,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
         body: JSON.stringify(values),
       });
       if (!response.ok) throw new Error(await response.text());
-      const generated = (await response.json()) as GeneratedSpec;
+      const generated = normalizeSpecPayloadTypes((await response.json()) as GeneratedSpec);
       setSpec(generated);
       setActiveTab("review");
       await refreshSavedSpecs();
@@ -2468,7 +2694,7 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
       const response = await fetch("/api/specs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(spec),
+        body: JSON.stringify(normalizeSpecPayloadTypes(spec)),
       });
       if (!response.ok) throw new Error(await response.text());
       const saved = (await response.json()) as SavedSpecSummary;
@@ -2501,8 +2727,9 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
       });
       if (!response.ok) throw new Error(await response.text());
       const result = (await response.json()) as { spec: GeneratedSpec; summary: SavedSpecSummary };
-      setSpec(result.spec);
-      form.reset(result.spec.intake);
+      const importedSpec = normalizeSpecPayloadTypes(result.spec);
+      setSpec(importedSpec);
+      form.reset(importedSpec.intake);
       await refreshSavedSpecs();
       setSaveStatus(`Imported ${result.summary.gameTitle}`);
       setImportStatus(`Imported ${result.summary.gameTitle}`);
@@ -2529,11 +2756,18 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
       setError(await response.text());
       return;
     }
-    const savedSpec = (await response.json()) as GeneratedSpec;
+    const savedSpec = normalizeSpecPayloadTypes((await response.json()) as GeneratedSpec);
     setSpec(savedSpec);
     form.reset(savedSpec.intake);
     setSaveStatus("Saved spec loaded");
     setActiveTab("review");
+  }
+
+  async function viewSavedSpec(id: string) {
+    setError("");
+    setViewerActiveSpecId(id);
+    setActiveTab("viewer");
+    await loadViewerSpecs(id);
   }
 
   async function deleteSpec(id: string) {
@@ -2750,7 +2984,8 @@ export default function MvpApp({ library }: { library: LibrarySnapshot }) {
         {activeTab === "specs" ? (
           <SavedSpecsBrowser
             savedSpecs={savedSpecs}
-            onOpen={openSavedSpec}
+            onOpen={viewSavedSpec}
+            onEdit={openSavedSpec}
             onDelete={deleteSpec}
             onImport={importSpecFile}
             canImport={canCreateOrEdit}
